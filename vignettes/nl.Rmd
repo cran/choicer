@@ -1,0 +1,174 @@
+---
+title: "Nested logit and grouped substitution"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Nested logit and grouped substitution}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+options(digits = 4)
+```
+
+Nested logit groups alternatives into *nests* of close substitutes. Within a
+nest, alternatives share an unobserved component, so substitution is stronger
+inside a nest than across nests. Each non-singleton nest has a positive
+dissimilarity parameter λ; singleton nests have λ fixed at 1 because no
+within-nest variation can identify it. The usual random-utility interpretation of
+nested logit focuses on `0 < λ <= 1`: λ = 1 gives the MNL limit, and smaller λ
+means tighter substitution inside the nest. choicer imposes λ > 0 rather than an
+upper bound. Estimates above one are mathematically computable but imply negative
+within-nest correlation and should be treated as evidence against the proposed
+nesting structure, not as the usual "close substitutes" interpretation.
+
+Think of nested logit as the **parsimonious middle ground** between the
+multinomial and mixed logits. It introduces genuine within-nest correlation in
+unobserved utility at the cost of just one extra parameter per nest, and it stays
+globally well-behaved and cheap to estimate (a closed-form GEV likelihood, no
+simulation). The price you pay is a strong prior:
+*you* must specify the nesting tree in advance, and the model only permits
+correlation within the nests you draw. When the right grouping is obvious from
+the application (travel modes, product categories), that is a defensible
+restriction; when it is not, the result can be sensitive to how you nest. A good
+nested-logit application therefore treats the tree as an economic assumption,
+not as a tuning parameter chosen after looking at fit statistics. See
+[Choosing among choice models](choicer.html#choosing-among-choice-models) for how
+this tradeoff compares with the alternatives.
+
+```{r setup}
+library(choicer)
+set_num_threads(2)
+```
+
+## Simulate a nested process
+
+`simulate_nl_data()` builds two nests of inside goods plus an outside option,
+with known dissimilarity parameters.
+
+```{r sim}
+sim <- simulate_nl_data(N = 4000, seed = 1)
+sim
+```
+
+## Fit
+
+Supply the nest membership column; choicer estimates the coefficients, the
+alternative-specific constants and the nest dissimilarity parameters jointly,
+using an analytical gradient and Hessian.
+
+```{r fit}
+fit <- run_nestlogit(
+  data                   = sim$data,
+  id_col                 = "id",
+  alt_col                = "j",
+  choice_col             = "choice",
+  covariate_cols         = c("X", "W"),
+  nest_col               = "nest",
+  use_asc                = TRUE,
+  include_outside_option = TRUE,
+  outside_opt_label      = 0L
+)
+summary(fit)
+```
+
+## Parameter recovery
+
+The `lambda` rows are the nest dissimilarity parameters — the part that is
+unique to nested logit.
+
+```{r recovery}
+recovery_table(fit, sim$true_params)
+```
+
+## What identifies the dissimilarity parameters?
+
+It is worth being explicit about where each parameter block gets its
+information. The coefficients on `X` and `W` are identified, as in any logit,
+by how utilities respond to covariate variation. The dissimilarity parameters
+are identified by *reallocation*: when an observed utility shifter moves, does
+the displaced demand stay inside the nest or spill across nests?
+Alternative-specific covariates that vary within nests are therefore the
+variation that disciplines λ. If the covariates move whole nests together — or
+the specification is mostly alternative-specific constants — λ is pinned down
+mainly by functional form, and a wide confidence interval on a `lambda` row is
+the model saying the data cannot see inside that nest.
+
+The estimate's position in (0, 1] is itself informative. A λ near 1 says the
+data see no extra within-nest correlation: the MNL was adequate, and the nest
+costs a parameter without buying substitution structure. A λ near 0 says the
+nest's alternatives are nearly perfect substitutes at the nest margin, which
+carries a sharp welfare implication: the nested logsum discounts within-nest
+variety by λ, so adding an alternative to a tight nest adds almost no expected
+consumer surplus, while adding one to a loose nest adds a lot. Welfare
+counterfactuals computed with `consumer_surplus()` inherit exactly this
+structure — one more reason to treat the tree as an economic assumption rather
+than a fit device.
+
+## Nest-consistent elasticities
+
+This is the payoff of nesting: cross-elasticities are larger for alternatives in
+the *same* nest than for alternatives in different nests. choicer's
+`elasticities()` respects the nest structure automatically.
+
+```{r elast}
+elasticities(fit, elast_var = "W")
+diversion_ratios(fit)
+```
+
+Those substitution patterns are credible only to the extent that the nesting tree
+is credible. If plausible alternative trees imply materially different diversion
+or welfare conclusions, that sensitivity is part of the empirical result rather
+than a nuisance to hide.
+
+## Share inversion with BLP
+
+`blp()` runs the Berry-Levinsohn-Pakes contraction to recover the mean utilities
+that reproduce a set of target shares — useful for calibration and demand
+estimation from aggregate data. For strongly-nested models a damping factor
+below 1 stabilizes the iteration.
+
+```{r blp}
+target_shares <- predict(fit, type = "shares")
+head(blp(fit, target_shares, damping = 0.5))
+```
+
+As always, `predict()`, `wtp()` and `consumer_surplus()` are available on the
+fitted object with the same syntax used throughout choicer.
+
+## Empirical checklist
+
+A reportable nested-logit specification should show the proposed tree and its
+economic rationale; report every estimated lambda and uncertainty interval;
+identify singleton nests, whose lambda is fixed at 1 by choicer because there is
+no within-nest variation to learn from; and flag estimates outside the
+conventional random-utility range `0 < lambda <= 1`. Refit plausible alternative trees and compare
+fit, diversion, elasticities, WTP, and welfare—not just the coefficient table.
+
+When using `blp()`, verify that shares reconstructed from the returned mean
+utilities match the target within the stated tolerance, and report sensitivity
+to damping. (The current return value is the utility vector, not a convergence
+diagnostics object.) Damping is a numerical aid, not evidence for the tree or
+the economic validity of lambda. NL
+does not search over trees or estimate cross-nested substitution, so uncertainty
+about the grouping remains specification uncertainty outside the reported
+standard errors.
+
+The full derivations — the GEV likelihood, analytical gradient and Hessian,
+nest-consistent elasticities and diversion, and how choicer's
+utility-maximization-consistent parameterization relates to the non-normalized
+nested logit found in some other software — are in the
+[math companion](https://fpcordeiro.github.io/choicer/articles/nested_logit_math.html).
+
+## References
+
+Heiss, F. (2002). Structural choice analysis with nested logit models.
+*The Stata Journal*, 2(3), 227-252.
+
+McFadden, D. (1978). Modelling the choice of residential location. In
+A. Karlqvist et al. (Eds.), *Spatial Interaction Theory and Planning Models*.
+North-Holland.
+
+Train, K. E. (2009). *Discrete Choice Methods with Simulation* (2nd ed.).
+Cambridge University Press, Chapter 4.

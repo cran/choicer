@@ -17,7 +17,10 @@ mxl_bhhh_parallel(
   rc_correlation = TRUE,
   rc_mean = FALSE,
   use_asc = TRUE,
-  include_outside_option = FALSE
+  include_outside_option = FALSE,
+  gen_seed = -1L,
+  gen_scramble = 1L,
+  gen_S = 0L
 )
 }
 \arguments{
@@ -46,6 +49,15 @@ mxl_bhhh_parallel(
 \item{use_asc}{whether to use alternative-specific constants.}
 
 \item{include_outside_option}{whether to include outside option normalized to 0 (if so, the outside option is not included in the data)}
+
+\item{gen_seed}{Integer master seed for the on-the-fly Halton generator. \code{< 0}
+(default) uses the materialized \code{eta_draws} cube; \code{>= 0} generates draws
+on the fly from this seed.}
+
+\item{gen_scramble}{Integer scramble mode for on-the-fly generation: \code{0} =
+identity permutations (plain Halton, compat), \code{1} = seeded position-wise digit permutations.}
+
+\item{gen_S}{Integer number of draws per individual, used only when \code{gen_seed >= 0}.}
 }
 \value{
 n_params x n_params PSD matrix representing the observed information
@@ -80,9 +92,10 @@ dt[, choice := sample(c(1L, rep(0L, J - 1))), by = id]
 d <- prepare_mxl_data(dt, "id", "alt", "choice", "x1", "w1")
 eta <- get_halton_normals(50, d$N, ncol(d$W))
 theta <- rep(0, ncol(d$X) + ncol(d$W) + nrow(d$alt_mapping) - 1)
-H <- mxl_bhhh_parallel(theta, d$X, d$W, d$alt_idx, d$choice_idx,
+H <- choicer:::mxl_bhhh_parallel(theta, d$X, d$W, d$alt_idx, d$choice_idx,
   d$M, d$weights, eta, rc_dist = rep(0L, ncol(d$W)),
   rc_correlation = FALSE, rc_mean = FALSE)
 dim(H)
 }
 }
+\keyword{internal}

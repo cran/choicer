@@ -23,13 +23,18 @@ run_mxlogit(
   upper = NULL,
   optimizer = NULL,
   control = list(),
-  se_method = c("hessian", "bhhh"),
+  se_method = c("hessian", "bhhh", "sandwich", "cluster"),
   scale_vars = c("none", "sd", "mad", "iqr"),
   weights = NULL,
   outside_opt_label = NULL,
   include_outside_option = FALSE,
+  draws = c("store", "generate"),
+  seed = NULL,
+  scramble = c("permuted", "none", "owen"),
   keep_data = TRUE,
-  nloptr_opts = NULL
+  nloptr_opts = NULL,
+  weights_col = NULL,
+  cluster_col = NULL
 )
 }
 \arguments{
@@ -98,12 +103,24 @@ or a custom function. See \code{\link{run_mnlogit}} for details.}
 
 \item{control}{List of optimizer-specific control parameters.}
 
-\item{se_method}{Method for computing standard errors. Either
+\item{se_method}{Method for computing standard errors. One of
 \code{"hessian"} (default) for the analytical Hessian of the simulated
-log-likelihood, or \code{"bhhh"} for the BHHH/outer-product-of-gradients
-(OPG) estimator. BHHH scales better to large problems (many alternatives
-or simulation draws) but may underestimate standard errors in finite
-samples or away from the optimum.}
+log-likelihood, \code{"bhhh"} for the BHHH/outer-product-of-gradients
+(OPG) estimator, \code{"sandwich"} for the robust (Huber-White)
+variance \eqn{V = A^{-1} B A^{-1}} (bread \eqn{A} = weighted negated
+Hessian, meat \eqn{B} = weight-squared OPG), or \code{"cluster"} for the
+cluster-robust sandwich (requires \code{cluster_col} or a prepared
+\code{input_data} with a \code{cluster} field). Use \code{"sandwich"} for
+valid inference under choice-based / WESML weighting, where the
+inverse-Hessian and ordinary BHHH are invalid; it reduces to the usual
+robust variance under uniform weights. BHHH scales better to large
+problems (many alternatives or simulation draws) but may underestimate
+standard errors in finite samples or away from the optimum. Any of these
+can also be recomputed post hoc via \code{vcov(fit, type = )}. Note that
+clustering repairs the inference, not the estimand: the MXL likelihood
+treats each choice situation as an independent draw from the mixing
+distribution; for panel random coefficients use
+\code{\link{run_hmnlogit}}.}
 
 \item{scale_vars}{Pre-estimation column scaling for design matrices. One of
 \code{"none"} (default), \code{"sd"} (sample standard deviation),
@@ -125,18 +142,64 @@ log-normal parameterization does not admit a closed-form back-transform
 under multiplicative scaling.}
 
 \item{weights}{Optional weight vector (convenience workflow). If \code{NULL},
-equal weights are used.}
+equal weights are used. All weights must be finite and strictly positive.}
 
 \item{outside_opt_label}{Label for the outside option (convenience workflow).}
 
 \item{include_outside_option}{Logical whether to include an outside option
 (convenience workflow).}
 
+\item{draws}{Draw storage mode. One of \code{"store"} (default) or \code{"generate"}.
+\code{"store"} pre-materializes the full \eqn{K_w \times S \times N} Halton cube
+(existing behavior, exact reproducibility). \code{"generate"} computes each
+individual's draws on-the-fly in C++ from a stored seed, eliminating the O(N)
+cube; recommended for memory-constrained or large-N settings. With
+\code{scramble = "permuted"}, each base-\eqn{b} digit position in each
+dimension receives a seeded permutation shared across sequence indices.
+This is not Owen's nested-uniform scramble and does not carry standard
+randomized-QMC unbiasedness or error-estimation guarantees. Only supported
+in the convenience workflow.}
+
+\item{seed}{Integer master seed for the on-the-fly generator. Used only when
+\code{draws = "generate"}. If \code{NULL} (default), a seed is drawn from R's
+RNG at call time (so \code{set.seed()} governs reproducibility). Ignored when
+\code{draws = "store"}.}
+
+\item{scramble}{Scrambling mode for on-the-fly Halton draws. One of
+\code{"permuted"} (default) for seeded position-wise digit permutations or
+\code{"none"} for plain Halton (identity permutations). The historical value
+\code{"owen"} is accepted with a deprecation warning as an alias for
+\code{"permuted"}; the implementation is not Owen's nested-uniform scramble.
+\code{"none"} reproduces the randtoolbox sequence exactly. Simulation-draw
+sensitivity should be assessed by increasing \code{S} and, for
+\code{"permuted"}, varying \code{seed}. Used only when
+\code{draws = "generate"}.}
+
 \item{keep_data}{Logical. If \code{TRUE} (default), stores prepared data in
 the returned object for post-estimation functions.}
 
 \item{nloptr_opts}{Deprecated. Use \code{optimizer} and \code{control}
 instead.}
+
+\item{weights_col}{Optional name of a column in \code{data} holding a per-row
+weight (constant within each choice situation, finite and strictly positive).
+Mutually exclusive with
+\code{weights}; the recommended way to pass WESML weights from
+\code{\link{sample_by_choice}} / \code{\link{wesml_weights}}, since
+alignment is by id rather than by position. Convenience workflow only. If
+\code{data} carries choice-based-sampling provenance (a
+\code{"choice_sampling"} attribute, as attached by
+\code{\link{sample_by_choice}} / \code{\link{wesml_weights}}) and neither
+\code{weights} nor \code{weights_col} is supplied, the recorded weight
+column is auto-detected and applied (with a message); if that column is
+absent the call errors rather than silently fitting an unweighted model
+under a WESML label.}
+
+\item{cluster_col}{Optional name of a column in \code{data} holding cluster
+labels for cluster-robust standard errors (e.g. a person id when the same
+decision maker contributes several choice situations). Must be constant
+within each \code{id_col}. Supplying \code{cluster_col} without an explicit
+\code{se_method} selects \code{se_method = "cluster"}.}
 }
 \value{
 A \code{choicer_mxl} object (inherits from \code{choicer_fit}).

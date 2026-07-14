@@ -4,15 +4,22 @@
 \alias{summary.choicer_mnl}
 \title{Summary for multinomial logit model}
 \usage{
-\method{summary}{choicer_mnl}(object, ...)
+\method{summary}{choicer_mnl}(object, gof = TRUE, ...)
 }
 \arguments{
 \item{object}{A choicer_mnl object.}
 
+\item{gof}{Logical; compute goodness-of-fit measures (McFadden R-squared,
+hit rate) for the summary footer. Involves an in-sample prediction pass
+(for mixed logit, a full simulation over draws); set to FALSE to skip.}
+
 \item{...}{Additional arguments (ignored).}
 }
 \value{
-A summary.choicer_mnl object (list with coefficients table and metadata).
+A summary.choicer_mnl object (list with coefficients table and
+metadata, including a \code{gof} element with goodness-of-fit measures from
+\code{\link{gof}}; its fields are NA when the model was fitted with
+\code{keep_data = FALSE}).
 }
 \description{
 Computes and returns a coefficient summary table with standard errors,

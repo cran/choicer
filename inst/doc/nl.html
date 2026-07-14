@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+
+<html>
+
+<head>
+
+<meta charset="utf-8" />
+<meta name="generator" content="pandoc" />
+<meta http-equiv="X-UA-Compatible" content="IE=EDGE" />
+
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+
+
+
+<title>Nested logit and grouped substitution</title>
+
+<script>// Pandoc 2.9 adds attributes on both header and div. We remove the former (to
+// be compatible with the behavior of Pandoc < 2.8).
+document.addEventListener('DOMContentLoaded', function(e) {
+  var hs = document.querySelectorAll("div.section[class*='level'] > :first-child");
+  var i, h, a;
+  for (i = 0; i < hs.length; i++) {
+    h = hs[i];
+    if (!/^h[1-6]$/i.test(h.tagName)) continue;  // it should be a header h1-h6
+    a = h.attributes;
+    while (a.length > 0) h.removeAttribute(a[0].name);
+  }
+});
+</script>
+
+<style type="text/css">
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+span.underline{text-decoration: underline;}
+div.column{display: inline-block; vertical-align: top; width: 50%;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+</style>
+
+
+
+<style type="text/css">
+code {
+white-space: pre;
+}
+.sourceCode {
+overflow: visible;
+}
+</style>
+<style type="text/css" data-origin="pandoc">
+html { -webkit-text-size-adjust: 100%; }
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+{ counter-reset: source-line 0; }
+pre.numberSource code > span
+{ position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+{ content: counter(source-line);
+position: relative; left: -1em; text-align: right; vertical-align: baseline;
+border: none; display: inline-block;
+-webkit-touch-callout: none; -webkit-user-select: none;
+-khtml-user-select: none; -moz-user-select: none;
+-ms-user-select: none; user-select: none;
+padding: 0 4px; width: 4em;
+color: #aaaaaa;
+}
+pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa; padding-left: 4px; }
+div.sourceCode
+{ }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+code span.al { color: #ff0000; font-weight: bold; } 
+code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.at { color: #7d9029; } 
+code span.bn { color: #40a070; } 
+code span.bu { color: #008000; } 
+code span.cf { color: #007020; font-weight: bold; } 
+code span.ch { color: #4070a0; } 
+code span.cn { color: #880000; } 
+code span.co { color: #60a0b0; font-style: italic; } 
+code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.do { color: #ba2121; font-style: italic; } 
+code span.dt { color: #902000; } 
+code span.dv { color: #40a070; } 
+code span.er { color: #ff0000; font-weight: bold; } 
+code span.ex { } 
+code span.fl { color: #40a070; } 
+code span.fu { color: #06287e; } 
+code span.im { color: #008000; font-weight: bold; } 
+code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.kw { color: #007020; font-weight: bold; } 
+code span.op { color: #666666; } 
+code span.ot { color: #007020; } 
+code span.pp { color: #bc7a00; } 
+code span.sc { color: #4070a0; } 
+code span.ss { color: #bb6688; } 
+code span.st { color: #4070a0; } 
+code span.va { color: #19177c; } 
+code span.vs { color: #4070a0; } 
+code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } 
+</style>
+<script>
+// apply pandoc div.sourceCode style to pre.sourceCode instead
+(function() {
+  var sheets = document.styleSheets;
+  for (var i = 0; i < sheets.length; i++) {
+    if (sheets[i].ownerNode.dataset["origin"] !== "pandoc") continue;
+    try { var rules = sheets[i].cssRules; } catch (e) { continue; }
+    var j = 0;
+    while (j < rules.length) {
+      var rule = rules[j];
+      // check if there is a div.sourceCode rule
+      if (rule.type !== rule.STYLE_RULE || rule.selectorText !== "div.sourceCode") {
+        j++;
+        continue;
+      }
+      var style = rule.style.cssText;
+      // check if color or background-color is set
+      if (rule.style.color === '' && rule.style.backgroundColor === '') {
+        j++;
+        continue;
+      }
+      // replace div.sourceCode by a pre.sourceCode rule
+      sheets[i].deleteRule(j);
+      sheets[i].insertRule('pre.sourceCode{' + style + '}', j);
+    }
+  }
+})();
+</script>
+
+
+
+
+<style type="text/css">body {
+background-color: #fff;
+margin: 1em auto;
+max-width: 700px;
+overflow: visible;
+padding-left: 2em;
+padding-right: 2em;
+font-family: "Open Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+font-size: 14px;
+line-height: 1.35;
+}
+#TOC {
+clear: both;
+margin: 0 0 10px 10px;
+padding: 4px;
+width: 400px;
+border: 1px solid #CCCCCC;
+border-radius: 5px;
+background-color: #f6f6f6;
+font-size: 13px;
+line-height: 1.3;
+}
+#TOC .toctitle {
+font-weight: bold;
+font-size: 15px;
+margin-left: 5px;
+}
+#TOC ul {
+padding-left: 40px;
+margin-left: -1.5em;
+margin-top: 5px;
+margin-bottom: 5px;
+}
+#TOC ul ul {
+margin-left: -2em;
+}
+#TOC li {
+line-height: 16px;
+}
+table {
+margin: 1em auto;
+border-width: 1px;
+border-color: #DDDDDD;
+border-style: outset;
+border-collapse: collapse;
+}
+table th {
+border-width: 2px;
+padding: 5px;
+border-style: inset;
+}
+table td {
+border-width: 1px;
+border-style: inset;
+line-height: 18px;
+padding: 5px 5px;
+}
+table, table th, table td {
+border-left-style: none;
+border-right-style: none;
+}
+table thead, table tr.even {
+background-color: #f7f7f7;
+}
+p {
+margin: 0.5em 0;
+}
+blockquote {
+background-color: #f6f6f6;
+padding: 0.25em 0.75em;
+}
+hr {
+border-style: solid;
+border: none;
+border-top: 1px solid #777;
+margin: 28px 0;
+}
+dl {
+margin-left: 0;
+}
+dl dd {
+margin-bottom: 13px;
+margin-left: 13px;
+}
+dl dt {
+font-weight: bold;
+}
+ul {
+margin-top: 0;
+}
+ul li {
+list-style: circle outside;
+}
+ul ul {
+margin-bottom: 0;
+}
+pre, code {
+background-color: #f7f7f7;
+border-radius: 3px;
+color: #333;
+white-space: pre-wrap; 
+}
+pre {
+border-radius: 3px;
+margin: 5px 0px 10px 0px;
+padding: 10px;
+}
+pre:not([class]) {
+background-color: #f7f7f7;
+}
+code {
+font-family: Consolas, Monaco, 'Courier New', monospace;
+font-size: 85%;
+}
+p > code, li > code {
+padding: 2px 0px;
+}
+div.figure {
+text-align: center;
+}
+img {
+background-color: #FFFFFF;
+padding: 2px;
+border: 1px solid #DDDDDD;
+border-radius: 3px;
+border: 1px solid #CCCCCC;
+margin: 0 5px;
+}
+h1 {
+margin-top: 0;
+font-size: 35px;
+line-height: 40px;
+}
+h2 {
+border-bottom: 4px solid #f7f7f7;
+padding-top: 10px;
+padding-bottom: 2px;
+font-size: 145%;
+}
+h3 {
+border-bottom: 2px solid #f7f7f7;
+padding-top: 10px;
+font-size: 120%;
+}
+h4 {
+border-bottom: 1px solid #f7f7f7;
+margin-left: 8px;
+font-size: 105%;
+}
+h5, h6 {
+border-bottom: 1px solid #ccc;
+font-size: 105%;
+}
+a {
+color: #0033dd;
+text-decoration: none;
+}
+a:hover {
+color: #6666ff; }
+a:visited {
+color: #800080; }
+a:visited:hover {
+color: #BB00BB; }
+a[href^="http:"] {
+text-decoration: underline; }
+a[href^="https:"] {
+text-decoration: underline; }
+
+code > span.kw { color: #555; font-weight: bold; } 
+code > span.dt { color: #902000; } 
+code > span.dv { color: #40a070; } 
+code > span.bn { color: #d14; } 
+code > span.fl { color: #d14; } 
+code > span.ch { color: #d14; } 
+code > span.st { color: #d14; } 
+code > span.co { color: #888888; font-style: italic; } 
+code > span.ot { color: #007020; } 
+code > span.al { color: #ff0000; font-weight: bold; } 
+code > span.fu { color: #900; font-weight: bold; } 
+code > span.er { color: #a61717; background-color: #e3d2d2; } 
+</style>
+
+
+
+
+</head>
+
+<body>
+
+
+
+
+<h1 class="title toc-ignore">Nested logit and grouped substitution</h1>
+
+
+
+<p>Nested logit groups alternatives into <em>nests</em> of close
+substitutes. Within a nest, alternatives share an unobserved component,
+so substitution is stronger inside a nest than across nests. Each
+non-singleton nest has a positive dissimilarity parameter λ; singleton
+nests have λ fixed at 1 because no within-nest variation can identify
+it. The usual random-utility interpretation of nested logit focuses on
+<code>0 &lt; λ &lt;= 1</code>: λ = 1 gives the MNL limit, and smaller λ
+means tighter substitution inside the nest. choicer imposes λ &gt; 0
+rather than an upper bound. Estimates above one are mathematically
+computable but imply negative within-nest correlation and should be
+treated as evidence against the proposed nesting structure, not as the
+usual “close substitutes” interpretation.</p>
+<p>Think of nested logit as the <strong>parsimonious middle
+ground</strong> between the multinomial and mixed logits. It introduces
+genuine within-nest correlation in unobserved utility at the cost of
+just one extra parameter per nest, and it stays globally well-behaved
+and cheap to estimate (a closed-form GEV likelihood, no simulation). The
+price you pay is a strong prior: <em>you</em> must specify the nesting
+tree in advance, and the model only permits correlation within the nests
+you draw. When the right grouping is obvious from the application
+(travel modes, product categories), that is a defensible restriction;
+when it is not, the result can be sensitive to how you nest. A good
+nested-logit application therefore treats the tree as an economic
+assumption, not as a tuning parameter chosen after looking at fit
+statistics. See <a href="choicer.html#choosing-among-choice-models">Choosing among choice
+models</a> for how this tradeoff compares with the alternatives.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" tabindex="-1"></a><span class="fu">library</span>(choicer)</span>
+<span id="cb1-2"><a href="#cb1-2" tabindex="-1"></a><span class="fu">set_num_threads</span>(<span class="dv">2</span>)</span></code></pre></div>
+<div id="simulate-a-nested-process" class="section level2">
+<h2>Simulate a nested process</h2>
+<p><code>simulate_nl_data()</code> builds two nests of inside goods plus
+an outside option, with known dissimilarity parameters.</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb2-1"><a href="#cb2-1" tabindex="-1"></a>sim <span class="ot">&lt;-</span> <span class="fu">simulate_nl_data</span>(<span class="at">N =</span> <span class="dv">4000</span>, <span class="at">seed =</span> <span class="dv">1</span>)</span>
+<span id="cb2-2"><a href="#cb2-2" tabindex="-1"></a>sim</span>
+<span id="cb2-3"><a href="#cb2-3" tabindex="-1"></a><span class="co">#&gt; &lt;choicer_sim: nl&gt;</span></span>
+<span id="cb2-4"><a href="#cb2-4" tabindex="-1"></a><span class="co">#&gt;   settings:</span></span>
+<span id="cb2-5"><a href="#cb2-5" tabindex="-1"></a><span class="co">#&gt;     N = 4000</span></span>
+<span id="cb2-6"><a href="#cb2-6" tabindex="-1"></a><span class="co">#&gt;     J_inside = 5</span></span>
+<span id="cb2-7"><a href="#cb2-7" tabindex="-1"></a><span class="co">#&gt;     nest_structure = (1,2), (3,4,5)</span></span>
+<span id="cb2-8"><a href="#cb2-8" tabindex="-1"></a><span class="co">#&gt;   rows in $data: 24000</span></span>
+<span id="cb2-9"><a href="#cb2-9" tabindex="-1"></a><span class="co">#&gt;   true_params: beta, delta, lambdas</span></span></code></pre></div>
+</div>
+<div id="fit" class="section level2">
+<h2>Fit</h2>
+<p>Supply the nest membership column; choicer estimates the
+coefficients, the alternative-specific constants and the nest
+dissimilarity parameters jointly, using an analytical gradient and
+Hessian.</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb3-1"><a href="#cb3-1" tabindex="-1"></a>fit <span class="ot">&lt;-</span> <span class="fu">run_nestlogit</span>(</span>
+<span id="cb3-2"><a href="#cb3-2" tabindex="-1"></a>  <span class="at">data                   =</span> sim<span class="sc">$</span>data,</span>
+<span id="cb3-3"><a href="#cb3-3" tabindex="-1"></a>  <span class="at">id_col                 =</span> <span class="st">&quot;id&quot;</span>,</span>
+<span id="cb3-4"><a href="#cb3-4" tabindex="-1"></a>  <span class="at">alt_col                =</span> <span class="st">&quot;j&quot;</span>,</span>
+<span id="cb3-5"><a href="#cb3-5" tabindex="-1"></a>  <span class="at">choice_col             =</span> <span class="st">&quot;choice&quot;</span>,</span>
+<span id="cb3-6"><a href="#cb3-6" tabindex="-1"></a>  <span class="at">covariate_cols         =</span> <span class="fu">c</span>(<span class="st">&quot;X&quot;</span>, <span class="st">&quot;W&quot;</span>),</span>
+<span id="cb3-7"><a href="#cb3-7" tabindex="-1"></a>  <span class="at">nest_col               =</span> <span class="st">&quot;nest&quot;</span>,</span>
+<span id="cb3-8"><a href="#cb3-8" tabindex="-1"></a>  <span class="at">use_asc                =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb3-9"><a href="#cb3-9" tabindex="-1"></a>  <span class="at">include_outside_option =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb3-10"><a href="#cb3-10" tabindex="-1"></a>  <span class="at">outside_opt_label      =</span> <span class="dv">0</span><span class="dt">L</span></span>
+<span id="cb3-11"><a href="#cb3-11" tabindex="-1"></a>)</span>
+<span id="cb3-12"><a href="#cb3-12" tabindex="-1"></a><span class="co">#&gt; Optimization run time 0h:0m:0.03s</span></span>
+<span id="cb3-13"><a href="#cb3-13" tabindex="-1"></a><span class="fu">summary</span>(fit)</span>
+<span id="cb3-14"><a href="#cb3-14" tabindex="-1"></a><span class="co">#&gt; Nested Logit (NL) model</span></span>
+<span id="cb3-15"><a href="#cb3-15" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb3-16"><a href="#cb3-16" tabindex="-1"></a><span class="co">#&gt; Parameter    Estimate  Std.Error  z-value  Pr(&gt;|z|)  </span></span>
+<span id="cb3-17"><a href="#cb3-17" tabindex="-1"></a><span class="co">#&gt; X            1.502372   0.047212  31.8220  0.00e+00  ***</span></span>
+<span id="cb3-18"><a href="#cb3-18" tabindex="-1"></a><span class="co">#&gt; W           -0.806760   0.027163 -29.7012  0.00e+00  ***</span></span>
+<span id="cb3-19"><a href="#cb3-19" tabindex="-1"></a><span class="co">#&gt; Lambda_1     0.794271   0.043175  18.3964  0.00e+00  ***</span></span>
+<span id="cb3-20"><a href="#cb3-20" tabindex="-1"></a><span class="co">#&gt; Lambda_2     0.185597   0.013846  13.4041  0.00e+00  ***</span></span>
+<span id="cb3-21"><a href="#cb3-21" tabindex="-1"></a><span class="co">#&gt; ASC_1        0.547211   0.123706   4.4235  9.71e-06  ***</span></span>
+<span id="cb3-22"><a href="#cb3-22" tabindex="-1"></a><span class="co">#&gt; ASC_2        0.316589   0.128397   2.4657  1.37e-02  *</span></span>
+<span id="cb3-23"><a href="#cb3-23" tabindex="-1"></a><span class="co">#&gt; ASC_3       -0.137415   0.133417  -1.0300  3.03e-01  </span></span>
+<span id="cb3-24"><a href="#cb3-24" tabindex="-1"></a><span class="co">#&gt; ASC_4       -0.449435   0.140065  -3.2088  1.33e-03  **</span></span>
+<span id="cb3-25"><a href="#cb3-25" tabindex="-1"></a><span class="co">#&gt; ASC_5        0.426713   0.122610   3.4802  5.01e-04  ***</span></span>
+<span id="cb3-26"><a href="#cb3-26" tabindex="-1"></a><span class="co">#&gt; ---</span></span>
+<span id="cb3-27"><a href="#cb3-27" tabindex="-1"></a><span class="co">#&gt; Signif. codes:  &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05</span></span>
+<span id="cb3-28"><a href="#cb3-28" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb3-29"><a href="#cb3-29" tabindex="-1"></a><span class="co">#&gt; Std. Errors: Analytical Hessian </span></span>
+<span id="cb3-30"><a href="#cb3-30" tabindex="-1"></a><span class="co">#&gt; Log-likelihood: -3063.62 </span></span>
+<span id="cb3-31"><a href="#cb3-31" tabindex="-1"></a><span class="co">#&gt; AIC: 6145.24  | BIC: 6201.89 </span></span>
+<span id="cb3-32"><a href="#cb3-32" tabindex="-1"></a><span class="co">#&gt; McFadden R2: 0.573 (adj: 0.571) | Hit rate: 0.694 </span></span>
+<span id="cb3-33"><a href="#cb3-33" tabindex="-1"></a><span class="co">#&gt; N: 4000  | Parameters: 9 </span></span>
+<span id="cb3-34"><a href="#cb3-34" tabindex="-1"></a><span class="co">#&gt; Optimization time: 0.03 s</span></span>
+<span id="cb3-35"><a href="#cb3-35" tabindex="-1"></a><span class="co">#&gt; Convergence: 3 ( NLOPT_FTOL_REACHED: Optimization stopped because ftol_rel or ftol_abs (above) was reached. )</span></span></code></pre></div>
+</div>
+<div id="parameter-recovery" class="section level2">
+<h2>Parameter recovery</h2>
+<p>The <code>lambda</code> rows are the nest dissimilarity parameters —
+the part that is unique to nested logit.</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" tabindex="-1"></a><span class="fu">recovery_table</span>(fit, sim<span class="sc">$</span>true_params)</span>
+<span id="cb4-2"><a href="#cb4-2" tabindex="-1"></a><span class="co">#&gt; &lt;choicer_recovery&gt; model=choicer_nl level=0.95</span></span>
+<span id="cb4-3"><a href="#cb4-3" tabindex="-1"></a><span class="co">#&gt;    parameter  group  true estimate     se    bias rel_bias_pct z_vs_true</span></span>
+<span id="cb4-4"><a href="#cb4-4" tabindex="-1"></a><span class="co">#&gt;       &lt;char&gt; &lt;char&gt; &lt;num&gt;    &lt;num&gt;  &lt;num&gt;   &lt;num&gt;        &lt;num&gt;     &lt;num&gt;</span></span>
+<span id="cb4-5"><a href="#cb4-5" tabindex="-1"></a><span class="co">#&gt; 1:         X   beta   1.5   1.5024 0.0472  0.0024       0.1581    0.0502</span></span>
+<span id="cb4-6"><a href="#cb4-6" tabindex="-1"></a><span class="co">#&gt; 2:         W   beta  -0.8  -0.8068 0.0272 -0.0068       0.8450   -0.2489</span></span>
+<span id="cb4-7"><a href="#cb4-7" tabindex="-1"></a><span class="co">#&gt; 3:  Lambda_1 lambda   0.8   0.7943 0.0432 -0.0057      -0.7161   -0.1327</span></span>
+<span id="cb4-8"><a href="#cb4-8" tabindex="-1"></a><span class="co">#&gt; 4:  Lambda_2 lambda   0.2   0.1856 0.0138 -0.0144      -7.2013   -1.0402</span></span>
+<span id="cb4-9"><a href="#cb4-9" tabindex="-1"></a><span class="co">#&gt; 5:     ASC_1    asc   0.5   0.5472 0.1237  0.0472       9.4422    0.3816</span></span>
+<span id="cb4-10"><a href="#cb4-10" tabindex="-1"></a><span class="co">#&gt; 6:     ASC_2    asc   0.3   0.3166 0.1284  0.0166       5.5296    0.1292</span></span>
+<span id="cb4-11"><a href="#cb4-11" tabindex="-1"></a><span class="co">#&gt; 7:     ASC_3    asc  -0.2  -0.1374 0.1334  0.0626     -31.2926    0.4691</span></span>
+<span id="cb4-12"><a href="#cb4-12" tabindex="-1"></a><span class="co">#&gt; 8:     ASC_4    asc  -0.5  -0.4494 0.1401  0.0506     -10.1130    0.3610</span></span>
+<span id="cb4-13"><a href="#cb4-13" tabindex="-1"></a><span class="co">#&gt; 9:     ASC_5    asc   0.4   0.4267 0.1226  0.0267       6.6782    0.2179</span></span>
+<span id="cb4-14"><a href="#cb4-14" tabindex="-1"></a><span class="co">#&gt;    lower_ci upper_ci covers</span></span>
+<span id="cb4-15"><a href="#cb4-15" tabindex="-1"></a><span class="co">#&gt;       &lt;num&gt;    &lt;num&gt; &lt;lgcl&gt;</span></span>
+<span id="cb4-16"><a href="#cb4-16" tabindex="-1"></a><span class="co">#&gt; 1:   1.4098   1.5949   TRUE</span></span>
+<span id="cb4-17"><a href="#cb4-17" tabindex="-1"></a><span class="co">#&gt; 2:  -0.8600  -0.7535   TRUE</span></span>
+<span id="cb4-18"><a href="#cb4-18" tabindex="-1"></a><span class="co">#&gt; 3:   0.7096   0.8789   TRUE</span></span>
+<span id="cb4-19"><a href="#cb4-19" tabindex="-1"></a><span class="co">#&gt; 4:   0.1585   0.2127   TRUE</span></span>
+<span id="cb4-20"><a href="#cb4-20" tabindex="-1"></a><span class="co">#&gt; 5:   0.3048   0.7897   TRUE</span></span>
+<span id="cb4-21"><a href="#cb4-21" tabindex="-1"></a><span class="co">#&gt; 6:   0.0649   0.5682   TRUE</span></span>
+<span id="cb4-22"><a href="#cb4-22" tabindex="-1"></a><span class="co">#&gt; 7:  -0.3989   0.1241   TRUE</span></span>
+<span id="cb4-23"><a href="#cb4-23" tabindex="-1"></a><span class="co">#&gt; 8:  -0.7240  -0.1749   TRUE</span></span>
+<span id="cb4-24"><a href="#cb4-24" tabindex="-1"></a><span class="co">#&gt; 9:   0.1864   0.6670   TRUE</span></span></code></pre></div>
+</div>
+<div id="what-identifies-the-dissimilarity-parameters" class="section level2">
+<h2>What identifies the dissimilarity parameters?</h2>
+<p>It is worth being explicit about where each parameter block gets its
+information. The coefficients on <code>X</code> and <code>W</code> are
+identified, as in any logit, by how utilities respond to covariate
+variation. The dissimilarity parameters are identified by
+<em>reallocation</em>: when an observed utility shifter moves, does the
+displaced demand stay inside the nest or spill across nests?
+Alternative-specific covariates that vary within nests are therefore the
+variation that disciplines λ. If the covariates move whole nests
+together — or the specification is mostly alternative-specific constants
+— λ is pinned down mainly by functional form, and a wide confidence
+interval on a <code>lambda</code> row is the model saying the data
+cannot see inside that nest.</p>
+<p>The estimate’s position in (0, 1] is itself informative. A λ near 1
+says the data see no extra within-nest correlation: the MNL was
+adequate, and the nest costs a parameter without buying substitution
+structure. A λ near 0 says the nest’s alternatives are nearly perfect
+substitutes at the nest margin, which carries a sharp welfare
+implication: the nested logsum discounts within-nest variety by λ, so
+adding an alternative to a tight nest adds almost no expected consumer
+surplus, while adding one to a loose nest adds a lot. Welfare
+counterfactuals computed with <code>consumer_surplus()</code> inherit
+exactly this structure — one more reason to treat the tree as an
+economic assumption rather than a fit device.</p>
+</div>
+<div id="nest-consistent-elasticities" class="section level2">
+<h2>Nest-consistent elasticities</h2>
+<p>This is the payoff of nesting: cross-elasticities are larger for
+alternatives in the <em>same</em> nest than for alternatives in
+different nests. choicer’s <code>elasticities()</code> respects the nest
+structure automatically.</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb5-1"><a href="#cb5-1" tabindex="-1"></a><span class="fu">elasticities</span>(fit, <span class="at">elast_var =</span> <span class="st">&quot;W&quot;</span>)</span>
+<span id="cb5-2"><a href="#cb5-2" tabindex="-1"></a><span class="co">#&gt;   0       1       2        3        4       5</span></span>
+<span id="cb5-3"><a href="#cb5-3" tabindex="-1"></a><span class="co">#&gt; 0 0 -0.1118 -0.1097 -0.07679 -0.07381 -0.1138</span></span>
+<span id="cb5-4"><a href="#cb5-4" tabindex="-1"></a><span class="co">#&gt; 1 0 -0.1529 -0.1444 -0.07679 -0.07381 -0.1138</span></span>
+<span id="cb5-5"><a href="#cb5-5" tabindex="-1"></a><span class="co">#&gt; 2 0 -0.1423 -0.1271 -0.07679 -0.07381 -0.1138</span></span>
+<span id="cb5-6"><a href="#cb5-6" tabindex="-1"></a><span class="co">#&gt; 3 0 -0.1118 -0.1097 -0.79069 -0.65893 -0.7997</span></span>
+<span id="cb5-7"><a href="#cb5-7" tabindex="-1"></a><span class="co">#&gt; 4 0 -0.1118 -0.1097 -0.63239 -0.66527 -0.7997</span></span>
+<span id="cb5-8"><a href="#cb5-8" tabindex="-1"></a><span class="co">#&gt; 5 0 -0.1118 -0.1097 -0.63239 -0.65893 -0.8606</span></span>
+<span id="cb5-9"><a href="#cb5-9" tabindex="-1"></a><span class="fu">diversion_ratios</span>(fit)</span>
+<span id="cb5-10"><a href="#cb5-10" tabindex="-1"></a><span class="co">#&gt;        0      1       2       3       4       5</span></span>
+<span id="cb5-11"><a href="#cb5-11" tabindex="-1"></a><span class="co">#&gt; 0 0.0000 0.0553 0.05027 0.03971 0.04039 0.04317</span></span>
+<span id="cb5-12"><a href="#cb5-12" tabindex="-1"></a><span class="co">#&gt; 1 0.2725 0.0000 0.36377 0.23303 0.22071 0.27854</span></span>
+<span id="cb5-13"><a href="#cb5-13" tabindex="-1"></a><span class="co">#&gt; 2 0.2300 0.3379 0.00000 0.20647 0.21384 0.24121</span></span>
+<span id="cb5-14"><a href="#cb5-14" tabindex="-1"></a><span class="co">#&gt; 3 0.1533 0.1826 0.17416 0.00000 0.24129 0.24856</span></span>
+<span id="cb5-15"><a href="#cb5-15" tabindex="-1"></a><span class="co">#&gt; 4 0.1319 0.1463 0.15263 0.20418 0.00000 0.18852</span></span>
+<span id="cb5-16"><a href="#cb5-16" tabindex="-1"></a><span class="co">#&gt; 5 0.2123 0.2780 0.25917 0.31661 0.28378 0.00000</span></span></code></pre></div>
+<p>Those substitution patterns are credible only to the extent that the
+nesting tree is credible. If plausible alternative trees imply
+materially different diversion or welfare conclusions, that sensitivity
+is part of the empirical result rather than a nuisance to hide.</p>
+</div>
+<div id="share-inversion-with-blp" class="section level2">
+<h2>Share inversion with BLP</h2>
+<p><code>blp()</code> runs the Berry-Levinsohn-Pakes contraction to
+recover the mean utilities that reproduce a set of target shares —
+useful for calibration and demand estimation from aggregate data. For
+strongly-nested models a damping factor below 1 stabilizes the
+iteration.</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb6-1"><a href="#cb6-1" tabindex="-1"></a>target_shares <span class="ot">&lt;-</span> <span class="fu">predict</span>(fit, <span class="at">type =</span> <span class="st">&quot;shares&quot;</span>)</span>
+<span id="cb6-2"><a href="#cb6-2" tabindex="-1"></a><span class="fu">head</span>(<span class="fu">blp</span>(fit, target_shares, <span class="at">damping =</span> <span class="fl">0.5</span>))</span>
+<span id="cb6-3"><a href="#cb6-3" tabindex="-1"></a><span class="co">#&gt;         [,1]</span></span>
+<span id="cb6-4"><a href="#cb6-4" tabindex="-1"></a><span class="co">#&gt; [1,]  0.5472</span></span>
+<span id="cb6-5"><a href="#cb6-5" tabindex="-1"></a><span class="co">#&gt; [2,]  0.3166</span></span>
+<span id="cb6-6"><a href="#cb6-6" tabindex="-1"></a><span class="co">#&gt; [3,] -0.1374</span></span>
+<span id="cb6-7"><a href="#cb6-7" tabindex="-1"></a><span class="co">#&gt; [4,] -0.4494</span></span>
+<span id="cb6-8"><a href="#cb6-8" tabindex="-1"></a><span class="co">#&gt; [5,]  0.4267</span></span></code></pre></div>
+<p>As always, <code>predict()</code>, <code>wtp()</code> and
+<code>consumer_surplus()</code> are available on the fitted object with
+the same syntax used throughout choicer.</p>
+</div>
+<div id="empirical-checklist" class="section level2">
+<h2>Empirical checklist</h2>
+<p>A reportable nested-logit specification should show the proposed tree
+and its economic rationale; report every estimated lambda and
+uncertainty interval; identify singleton nests, whose lambda is fixed at
+1 by choicer because there is no within-nest variation to learn from;
+and flag estimates outside the conventional random-utility range
+<code>0 &lt; lambda &lt;= 1</code>. Refit plausible alternative trees
+and compare fit, diversion, elasticities, WTP, and welfare—not just the
+coefficient table.</p>
+<p>When using <code>blp()</code>, verify that shares reconstructed from
+the returned mean utilities match the target within the stated
+tolerance, and report sensitivity to damping. (The current return value
+is the utility vector, not a convergence diagnostics object.) Damping is
+a numerical aid, not evidence for the tree or the economic validity of
+lambda. NL does not search over trees or estimate cross-nested
+substitution, so uncertainty about the grouping remains specification
+uncertainty outside the reported standard errors.</p>
+<p>The full derivations — the GEV likelihood, analytical gradient and
+Hessian, nest-consistent elasticities and diversion, and how choicer’s
+utility-maximization-consistent parameterization relates to the
+non-normalized nested logit found in some other software — are in the <a href="https://fpcordeiro.github.io/choicer/articles/nested_logit_math.html">math
+companion</a>.</p>
+</div>
+<div id="references" class="section level2">
+<h2>References</h2>
+<p>Heiss, F. (2002). Structural choice analysis with nested logit
+models. <em>The Stata Journal</em>, 2(3), 227-252.</p>
+<p>McFadden, D. (1978). Modelling the choice of residential location. In
+A. Karlqvist et al. (Eds.), <em>Spatial Interaction Theory and Planning
+Models</em>. North-Holland.</p>
+<p>Train, K. E. (2009). <em>Discrete Choice Methods with Simulation</em>
+(2nd ed.). Cambridge University Press, Chapter 4.</p>
+</div>
+
+
+
+<!-- code folding -->
+
+
+<!-- dynamically load mathjax for compatibility with self-contained -->
+<script>
+  (function () {
+    var script = document.createElement("script");
+    script.type = "text/javascript";
+    script.src  = "https://mathjax.rstudio.com/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML";
+    document.getElementsByTagName("head")[0].appendChild(script);
+  })();
+</script>
+
+</body>
+</html>

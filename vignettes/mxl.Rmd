@@ -1,0 +1,216 @@
+---
+title: "Mixed logit and preference heterogeneity"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Mixed logit and preference heterogeneity}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+options(digits = 4)
+```
+
+The mixed (random-coefficients) logit lets tastes vary across decision units. Instead of
+a single coefficient on each random attribute, choicer estimates a *distribution*
+of coefficients. Substitution then reflects both observed covariates and the
+estimated distribution of tastes. Estimation is by simulated maximum likelihood
+using Halton draws, with the likelihood, gradient and Hessian evaluated in
+parallel C++. `run_mxlogit()` currently estimates a **cross-sectional**
+simulated likelihood: each choice situation's probability is integrated over
+the taste distribution separately. It does not hold a simulation draw fixed
+across a person's tasks and then integrate the product of conditional
+probabilities, as a frequentist panel mixed-logit likelihood would.
+
+A useful way to see the mechanism is to write the mixed-logit probability as a
+logit kernel averaged over the taste distribution,
+$P_{ij} = \int L_{ij}(\beta)\, f(\beta)\, d\beta$, where
+$L_{ij}(\beta) = \exp(X_{ij}\beta) / \sum_k \exp(X_{ik}\beta)$. *Conditional on a
+draw* $\beta$, the kernel is an ordinary logit. The empirical content of the
+mixed logit is in the averaging: people with different $\beta$'s place different
+values on the same attributes, so demand leaving an alternative need not go to
+the same destinations for all consumers. For counterfactual work, the distinction
+between observed heterogeneity and the estimated mixing distribution is central:
+flexibility that is not disciplined by the available variation is supplied by the
+maintained distribution $f(\beta)$.
+
+```{r setup}
+library(choicer)
+set_num_threads(2)
+```
+
+## Simulate correlated random coefficients
+
+`simulate_mxl_data()` draws choices in which the coefficients on `w1` and `w2`
+are themselves random and *correlated* across the population.
+
+```{r sim}
+sim <- simulate_mxl_data(N = 2000, J = 4, seed = 1)
+sim
+```
+
+## Fit
+
+A robust recipe for mixed logit: warm-start from a plain MNL, scale the
+variables so the Hessian is well conditioned, and use enough Halton draws. Here
+we estimate a full (correlated) covariance of the random coefficients.
+
+```{r fit}
+fit <- run_mxlogit(
+  data            = sim$data,
+  id_col          = "id",
+  alt_col         = "alt",
+  choice_col      = "choice",
+  covariate_cols  = c("x1", "x2"),  # fixed coefficients
+  random_var_cols = c("w1", "w2"),  # random coefficients
+  rc_correlation  = TRUE,           # estimate their full covariance
+  S               = 100L,           # Halton draws per person
+  draws           = "generate",     # generate draws on the fly (low memory)
+  seed            = 7L,
+  scale_vars      = "sd",           # condition the Hessian across blocks
+  se_method       = "bhhh"
+)
+summary(fit)
+```
+
+This vignette uses `se_method = "bhhh"` because the outer-product calculation is
+fast and keeps package-build time short. For final empirical work, compare it
+with the default analytical-Hessian standard errors; when the data come from a
+choice-based or otherwise weighted sample, use `se_method = "sandwich"` so the
+reported covariance is the robust WESML sandwich rather than the inverse weighted
+Hessian. If WESML observations are also dependent within people or markets, use
+the weighted cluster sandwich (`se_method = "cluster"`, with `cluster_col`) and
+have enough independent clusters for its asymptotics.
+
+> **Tip.** For real applications increase the number of draws (`S`) until your
+> estimates are stable, and keep `scale_vars = "sd"`. Stability in `S` is a
+> statistical requirement, not just numerical hygiene: simulated ML with a
+> fixed number of draws is biased — the log of an unbiased probability
+> simulator is not unbiased — and the classical asymptotics require `S` to
+> grow with the sample (see the
+> [math companion](https://fpcordeiro.github.io/choicer/articles/mixed_logit_math.html) for the conditions). If the solver
+> struggles, pass an explicit `theta_init`: place the MNL slope and ASC estimates
+> in the corresponding MXL parameter blocks and initialize the additional mean
+> and Cholesky coordinates deliberately. Bounds can keep Cholesky diagonals away
+> from numerically pathological regions. See
+> `inst/simulations/mxl_simulation.R` for a fully hardened example.
+
+## Parameter recovery
+
+```{r recovery}
+recovery_table(fit, sim$true_params)
+```
+
+The `beta` rows are the fixed coefficients, the `sigma` rows describe the
+covariance of the random coefficients (its Cholesky elements), and the `asc`
+rows are the alternative-specific constants.
+
+## Substitution through taste heterogeneity
+
+With random coefficients, diversion is mediated by the distribution of tastes. If
+the estimated mixing distribution captures economically meaningful heterogeneity,
+people who value one alternative tend to value nearby substitutes on that latent
+margin. Diversion can therefore depend on *which* attribute is changing, so
+`diversion_ratios()` takes a `wrt_var`:
+
+```{r diversion}
+elasticities(fit, elast_var = "x2")
+diversion_ratios(fit, wrt_var = "x2")
+
+# For a random-coefficient attribute the perturbation coordinate matters.
+elasticities(fit, elast_var = "w2", is_random_coef = TRUE)
+diversion_ratios(fit, wrt_var = "w2", is_random_coef = TRUE)
+```
+
+The rest of the toolkit — `predict()`, `wtp()`, `consumer_surplus()`, `blp()` —
+uses the same fitted object as in the [getting-started vignette](choicer.html).
+Prediction and share inversion integrate over the fitted taste distribution;
+`wtp()` respects choicer's supported coefficient parameterizations. In v0.2.0,
+`consumer_surplus()` requires a fixed price coefficient because inverse moments
+of a random price coefficient need not exist.
+
+## Identification and tails
+
+The mixed logit is a genuine generalization of the MNL — if tastes are in fact
+homogeneous, the estimator simply returns a near-zero variance and you are back
+to a logit. The issue is not that random coefficients are intrinsically fragile.
+The issue is identification: the additional substitution structure is carried by
+the mixing distribution $f(\beta)$, and $f(\beta)$ is often hardest to pin down
+where it matters most for welfare and diversion — in the tails.
+
+Two consequences are worth keeping in front of you:
+
+- **The tails drive the economics you report.** A lognormal price coefficient
+  puts a slice of the population at near-zero price sensitivity, which can give a
+  willingness-to-pay distribution with *no finite mean* and explosive welfare
+  numbers. An unbounded normal coefficient implies a fraction of consumers with
+  the *wrong sign* (who prefer paying more). These artifacts come from the
+  assumed shape of $f$, not from the data, and the estimator will happily contort
+  a tail to match an aggregate moment.
+
+- **$f(\beta)$ is hard to identify and estimate in practice.** A single
+  cross-section of choices — one decision per person, a fixed menu — carries
+  little information about the spread of tastes. In mixed-logit research,
+  reliable estimation typically uses **repeated choices from the same individual**
+  (panel data), **substantial
+  variation in choice sets or attributes across markets** (the BLP setting), or
+  the rich, designed attribute variation of a stated-preference experiment.
+  Without one of these, the random-coefficient variances are weakly identified
+  and the estimates can be fragile. Note that on panel data `run_mxlogit()`
+  does not exploit the first source: it still maximizes a *cross-sectional*
+  simulated likelihood — each choice situation is integrated separately rather
+  than sharing a taste draw across that person's likelihood contributions.
+  Cluster-robust standard errors
+  (`cluster_col=`, or `vcov(fit, type = "cluster")`; see
+  [Which standard errors, and when](inference.html)) repair the inference for
+  within-person dependence, but the model that actually *uses* the panel to
+  identify the taste distribution is the hierarchical Bayesian logit,
+  [`run_hmnlogit()`](hb.html).
+
+## A research checklist
+
+For a reportable `run_mxlogit()` application:
+
+1. Fit a transparent MNL benchmark, scale poorly conditioned covariates, and use
+   its estimates to inform explicit `theta_init` values.
+2. Run several manually supplied starting values and retain their objective,
+   convergence code and substantive outputs. choicer does not yet automate
+   multistart estimation.
+3. Increase `S` until coefficients, covariance elements, standard errors, WTP,
+   elasticities and diversion ratios are stable—not merely until the optimizer
+   reports convergence.
+4. Compare choicer's supported normal and shifted-lognormal restrictions where
+   economically meaningful, and show what their tails imply for signs and WTP.
+5. Compare the analytical-Hessian and BHHH results; use robust or WESML inference
+   for weighting/misspecification and cluster inference for repeated sampling
+   units as appropriate.
+6. Treat clustering of panel tasks as an inference correction only. If tastes
+   should persist within person, use `run_hmnlogit()` so the likelihood itself
+   uses that repetition.
+7. Compare substitution and welfare with the MNL or NL benchmark and state which
+   data variation, rather than the mixing distribution alone, earns the change.
+
+Bounded/censored mixing distributions, WTP-space estimation, and latent-class
+logit can be useful alternative modeling strategies, but they are **not
+implemented in choicer v0.2.0**. They require another implementation today and
+are roadmap candidates here; they should not be presented as options to
+`run_mxlogit()`. The broader tradeoff is laid out in [Choosing among choice
+models](choicer.html#choosing-among-choice-models).
+
+## References
+
+McFadden, D. and Train, K. (2000). Mixed MNL models for discrete response.
+*Journal of Applied Econometrics*, 15(5), 447-470.
+
+Revelt, D. and Train, K. (1998). Mixed logit with repeated choices:
+households' choices of appliance efficiency level. *Review of Economics and
+Statistics*, 80(4), 647-657.
+
+Train, K. E. (2009). *Discrete Choice Methods with Simulation* (2nd ed.).
+Cambridge University Press.
+
+Train, K. and Weeks, M. (2005). Discrete choice models in preference space
+and willingness-to-pay space. In R. Scarpa and A. Alberini (Eds.),
+*Applications of Simulation Methods in Environmental and Resource Economics*.
+Springer.

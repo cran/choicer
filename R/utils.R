@@ -9,6 +9,12 @@
 #' @noRd
 `%||%` <- function(x, y) if (is.null(x)) y else x
 
+# Measured Rcpp::wrap()+R-list-overhead multiplier for the beta_i draw cube
+# (profiling report `_benchmarks/hb_profiling_report.md` §4: true RSS is
+# 1.7-1.9x the naive 8*K*N*R_keep byte estimate). Using the conservative
+# (higher) end for a fail-fast guard.
+.HB_BETA_I_WRAP_FACTOR <- 1.9
+
 #' Convert elapsed time to formatted string
 #' @param time A proc_time object from system.time()
 #' @returns Formatted string like "0h:1m:23s"
@@ -118,6 +124,77 @@ resolve_var_index <- function(var, col_names) {
   stop("'elast_var' must be a character variable name or integer index.")
 }
 
+#' Per-column scale vector for a design matrix
+#'
+#' Returns the per-column scale (sample SD or a robust SD-equivalent) used to
+#' standardize a design matrix before optimization. Column names are preserved.
+#' @param M A numeric matrix.
+#' @param method One of "sd", "mad", or "iqr".
+#' @returns Named numeric vector of column scales.
+#' @noRd
+.column_scales <- function(M, method) {
+  scale_fn <- switch(
+    method,
+    sd  = stats::sd,
+    mad = stats::mad,
+    iqr = function(x) stats::IQR(x) / 1.349
+  )
+  apply(M, 2, scale_fn)
+}
+
+#' Validate that column scales are not near-zero
+#'
+#' Raises an informative error for columns in `idx` whose scale is below `eps`
+#' (near-constant columns that cannot be standardized).
+#' @param s Named numeric vector of column scales.
+#' @param method Scaling method (for the error message).
+#' @param label Block label (e.g., "fixed-coefficient").
+#' @param idx Integer indices of columns to check (default: all).
+#' @param eps Numeric threshold below which a scale is "too small".
+#' @returns Invisibly, `s`.
+#' @noRd
+.assert_scales_ok <- function(s, method, label, idx = seq_along(s), eps = 1e-8) {
+  bad <- !is.finite(s[idx]) | s[idx] < eps
+  if (any(bad)) {
+    off <- idx[bad]
+    stop("scale_vars='", method, "': ", label,
+         " column(s) with scale < ", eps, ": ",
+         paste0(names(s)[off], "=", signif(s[off], 3), collapse = ", "))
+  }
+  invisible(s)
+}
+
+#' Back-transform scaled-space estimates to natural units
+#'
+#' Applies the delta-method back-transform
+#' `theta_natural = bt_mult * theta_scaled + bt_shift` and
+#' `vcov_natural = (bt_mult bt_mult') o vcov_scaled`, re-deriving SEs while
+#' guarding against NA/negative variances, and restores parameter names.
+#' @param theta_hat Numeric vector of scaled-space estimates.
+#' @param vcov_result List with `vcov` (matrix or NULL) and `se`.
+#' @param bt_mult Numeric multiplier vector (length n_params).
+#' @param bt_shift Numeric shift vector (length n_params).
+#' @param param_names Character vector of parameter names.
+#' @returns List with `theta` and `vcov_result`.
+#' @noRd
+.backtransform_estimates <- function(theta_hat, vcov_result, bt_mult, bt_shift,
+                                     param_names) {
+  theta_hat <- theta_hat * bt_mult + bt_shift
+  names(theta_hat) <- param_names
+  if (!is.null(vcov_result$vcov)) {
+    vcov_result$vcov <- vcov_result$vcov * tcrossprod(bt_mult)
+    rownames(vcov_result$vcov) <- param_names
+    colnames(vcov_result$vcov) <- param_names
+    diag_v <- diag(vcov_result$vcov)
+    se <- rep(NA_real_, length(theta_hat))
+    ok <- !is.na(diag_v) & diag_v >= 0
+    se[ok] <- sqrt(diag_v[ok])
+    names(se) <- param_names
+    vcov_result$se <- se
+  }
+  list(theta = theta_hat, vcov_result = vcov_result)
+}
+
 #' Label a J x J matrix with alternative names
 #'
 #' Adds row and column names from \code{alt_mapping} to a square matrix.
@@ -133,4 +210,26 @@ label_matrix <- function(mat, alt_mapping) {
     colnames(mat) <- alt_labels
   }
   mat
+}
+
+#' Collapse a row-level column to one value per choice situation
+#'
+#' Used by the prepare_*_data() functions for columns that must be constant
+#' within a choice situation (e.g. cluster labels). Called AFTER filtering
+#' and ordering, so alignment is by id, never by position.
+#'
+#' @param dt data.table after filtering/ordering (long format).
+#' @param col Name of the column to collapse.
+#' @param id_col Name of the choice-situation id column.
+#' @param ids Vector of situation ids in prepared order.
+#' @returns Vector of length \code{length(ids)}, one value per situation.
+#' @noRd
+.collapse_situation_col <- function(dt, col, id_col, ids) {
+  nuniq <- dt[, data.table::uniqueN(get(col)), by = id_col][["V1"]]
+  if (any(nuniq != 1L)) {
+    stop("`", col, "` must be constant within each '", id_col,
+         "' (one value per choice situation).", call. = FALSE)
+  }
+  cmap <- dt[, get(col)[1L], by = id_col]
+  cmap[["V1"]][match(ids, cmap[[id_col]])]
 }

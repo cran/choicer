@@ -1,5 +1,6 @@
 // [[Rcpp::depends(RcppArmadillo)]]
 #include "choicer.h"
+#include "choicer_internal.h"
 
 //' Log-likelihood and gradient for multinomial logit model
 //'
@@ -26,11 +27,11 @@
 //' dt[, choice := sample(c(1L, rep(0L, J - 1))), by = id]
 //' d <- prepare_mnl_data(dt, "id", "alt", "choice", c("x1", "x2"))
 //' theta <- rep(0, ncol(d$X) + nrow(d$alt_mapping) - 1)
-//' result <- mnl_loglik_gradient_parallel(theta, d$X, d$alt_idx,
+//' result <- choicer:::mnl_loglik_gradient_parallel(theta, d$X, d$alt_idx,
 //'   d$choice_idx, d$M, d$weights)
 //' result$objective  # negative log-likelihood
 //' }
-//' @export
+//' @keywords internal
 // [[Rcpp::export]]
 Rcpp::List mnl_loglik_gradient_parallel(
     const arma::vec& theta,
@@ -47,27 +48,9 @@ Rcpp::List mnl_loglik_gradient_parallel(
   const int K = X.n_cols;
   const int n_params = theta.n_elem;
 
-  arma::vec beta = theta.subvec(0, K - 1);
-  arma::vec delta;
-  int delta_length = 0;
+  const MnlParams par = parse_mnl_theta(theta, K, use_asc, include_outside_option);
+  validate_choice_data(X, alt_idx, M, use_asc, par.delta, &weights, &choice_idx);
 
-  if (use_asc) {
-    delta_length = n_params - K;
-    if (delta_length <= 0) {
-      Rcpp::stop("Error: ASC parameters expected but not provided.");
-    }
-    if (include_outside_option) {
-      // delta covers all J inside alternatives
-      delta = theta.subvec(K, n_params - 1);
-    } else {
-      // delta_1 = 0 fixed
-      delta = arma::zeros(delta_length + 1);
-      delta.subvec(1, delta_length) = theta.subvec(K, n_params - 1);
-    }
-  } else {
-    delta_length = 0;
-    delta = arma::zeros(delta_length);
-  }
   // alt_idx is 1-based indexing => shift to 0-based indexing
   arma::uvec alt_idx0 = alt_idx - 1;
 
@@ -75,12 +58,23 @@ Rcpp::List mnl_loglik_gradient_parallel(
   const Rcpp::IntegerVector S = compute_prefix_sum(M);
 
   // Pre-compute base utility for all individuals (single BLAS call)
-  arma::vec base_util = X * beta;
-  if (use_asc) base_util += delta.elem(alt_idx0);
+  arma::vec base_util = compute_base_util(X, par.beta, alt_idx0, use_asc, par.delta);
+
+  // --- H2: Serial pre-loop validation of chosen-alternative indices ---
+  // Rcpp::stop() is only safe outside parallel regions.
+  for (int i = 0; i < N; ++i) {
+    int chosen = choice_idx[i];
+    if (!include_outside_option) chosen -= 1;
+    const int num_choices_i = include_outside_option ? M[i] + 1 : M[i];
+    if (chosen < 0 || chosen >= num_choices_i) {
+      Rcpp::stop("Invalid chosen alternative index for individual %d", i);
+    }
+  }
 
   // Prepare global accumulators
   double global_loglik = 0.0;
   arma::vec global_grad = arma::zeros(n_params);
+  bool nonfinite_seen = false; // H1: flag set inside parallel, warning emitted after
 
 #ifdef _OPENMP
 #pragma omp parallel
@@ -90,6 +84,7 @@ Rcpp::List mnl_loglik_gradient_parallel(
     double local_loglik = 0.0;
     arma::vec local_grad = arma::zeros(n_params);
     arma::vec diff_vec; // pre-allocated per-thread, resized per individual
+    bool local_nonfinite = false;
 
 #ifdef _OPENMP
 #pragma omp for schedule(dynamic)
@@ -104,38 +99,28 @@ Rcpp::List mnl_loglik_gradient_parallel(
       arma::uvec alt_idx0_i = alt_idx0.subvec(start_idx, end_idx); // M[i]
 
       // Build utility vector V_i
-      arma::vec V_i = arma::zeros(num_choices);
+      arma::vec V_i(num_choices);
       arma::vec inside_utils = base_util.subvec(start_idx, end_idx);
-
-      if (include_outside_option) {
-        // outside option at index 0
-        V_i.subvec(1, num_choices - 1) = inside_utils;
-      } else {
-        V_i = inside_utils;
-      }
+      fill_choice_utilities(V_i, inside_utils, num_choices, include_outside_option);
 
       // log-likelihood -------------------------------------------------------
-      
+
       // Vector of choice probabilities
-      V_i -= V_i.max(); // for numerical stability
-      double log_denom = std::log(arma::accu(arma::exp(V_i)));
-      arma::vec P_i = arma::exp(V_i - log_denom);
-      
-      // Identify chosen alternative
+      arma::vec P_i;
+      const double log_denom = stable_softmax(V_i, P_i);
+
+      // Identify chosen alternative (validated serially above)
       int chosen_alt = choice_idx[i];
       if (!include_outside_option) {
         chosen_alt -= 1; // shift by 1 for inside-only indexing
-      }
-      if (chosen_alt < 0 || chosen_alt >= num_choices) {
-        Rcpp::stop("Invalid chosen alternative index for individual %d", i);
       }
 
       // Probability of chosen alternative
       double V_choice = V_i(chosen_alt);
       double log_P_choice = V_choice - log_denom;
       if (!std::isfinite(log_P_choice)) {
-        Rcpp::Rcout << "Warning: log_P_choice is not finite at individual " << i << std::endl;
-        log_P_choice = -1e10; // fallback to a large negative value
+        local_nonfinite = true; // H1: note without printing (R-API unsafe here)
+        log_P_choice = -1e10;  // fallback to a large negative value
       }
 
       // Accumulate local weighted log-likelihood
@@ -157,17 +142,12 @@ Rcpp::List mnl_loglik_gradient_parallel(
 
       // ---- Delta block: scatter (irregular alt-index mapping) ----
       if (use_asc) {
-        for (int a = 0; a < num_choices; ++a) {
-          const double val = w_i * diff_vec[a];
-          if (include_outside_option) {
-            if (a > 0) {
-              const int a_id = alt_idx0_i[a - 1];
-              local_grad[K + a_id] += val;
-            }
-          } else {
-            const int a_id = alt_idx0_i[a];
-            if (a_id > 0) local_grad[K + (a_id - 1)] += val; // delta_1 is normalised 0
-          }
+        if (include_outside_option) {
+          scatter_delta_grad(local_grad, K, diff_vec.subvec(1, m_i), alt_idx0_i,
+                             m_i, include_outside_option, w_i);
+        } else {
+          scatter_delta_grad(local_grad, K, diff_vec, alt_idx0_i,
+                             m_i, include_outside_option, w_i);
         }
       }
     } // end of i loop
@@ -179,14 +159,292 @@ Rcpp::List mnl_loglik_gradient_parallel(
     {
       global_loglik += local_loglik;
       global_grad += local_grad;
+      if (local_nonfinite) nonfinite_seen = true;
     }
   } // end parallel region
 
-  // Return negative log-likelihood and gradient
+  // H1: emit warning once, outside the parallel region (R-API safe here)
+  if (nonfinite_seen) {
+    Rcpp::warning("Non-finite log-probability encountered; clamped to -1e10. Check for extreme utility values.");
+  }
+
+  // H3: Sanitize NaN/Inf (matching mxl_loglik_gradient_parallel)
+  double obj = -global_loglik;
+  arma::vec grad = -global_grad;
+  if (!std::isfinite(obj)) {
+    obj = 1e10;
+    grad.zeros();
+  } else {
+    grad.elem(arma::find_nonfinite(grad)).zeros();
+  }
   return Rcpp::List::create(
-    Rcpp::Named("objective") = -global_loglik,
-    Rcpp::Named("gradient")  = -global_grad
+    Rcpp::Named("objective") = obj,
+    Rcpp::Named("gradient")  = grad
   );
+}
+
+//' BHHH/OPG information matrix for multinomial logit model
+//'
+//' Computes the weighted outer product of per-individual scores
+//' \eqn{\sum_i w_i\, s_i s_i^\top} for the Multinomial Logit model. The
+//' per-individual score \eqn{s_i} is the (positive) gradient of individual
+//' \eqn{i}'s log-likelihood contribution and is weight-free; the supplied
+//' \code{weights} enter only as the leading multiplier. Passing
+//' \code{weights = w} yields the ordinary weighted BHHH/OPG information; passing
+//' \code{weights = w^2} yields the sandwich \emph{meat}
+//' \eqn{B = \sum_i w_i^2 s_i s_i^\top} used for robust (WESML) inference.
+//'
+//' @param theta K + J - 1 or K + J vector with model parameters
+//' @param X sum(M) x K design matrix with covariates. Stacks M\[i] x K matrices for individual i.
+//' @param alt_idx sum(M) x 1 vector with indices of alternatives within each choice set; 1-based indexing
+//' @param choice_idx N x 1 vector with indices of chosen alternatives; 1-based indexing relative to X; 0 is used if include_outside_option=True
+//' @param M N x 1 vector with number of alternatives for each individual
+//' @param weights N x 1 vector with weights for each observation
+//' @param use_asc whether to use alternative-specific constants
+//' @param include_outside_option whether to include outside option normalized to 0 (if so, the outside option is not included in the data)
+//' @returns A symmetric positive-semidefinite information matrix
+//'   \eqn{\sum_i w_i\, s_i s_i^\top} (same sign convention as the negated Hessian).
+//' @examples
+//' \donttest{
+//' library(data.table)
+//' set.seed(42)
+//' N <- 50; J <- 3
+//' dt <- data.table(id = rep(1:N, each = J), alt = rep(1:J, N))
+//' dt[, `:=`(x1 = rnorm(.N), x2 = rnorm(.N))]
+//' dt[, choice := 0L]
+//' dt[, choice := sample(c(1L, rep(0L, J - 1))), by = id]
+//' fit <- run_mnlogit(dt, "id", "alt", "choice", c("x1", "x2"))
+//' B <- choicer:::mnl_bhhh_parallel(coef(fit), fit$data$X, fit$data$alt_idx,
+//'   fit$data$choice_idx, fit$data$M, fit$data$weights)
+//' dim(B)
+//' }
+//' @keywords internal
+// [[Rcpp::export]]
+arma::mat mnl_bhhh_parallel(
+    const arma::vec& theta,
+    const arma::mat& X,
+    const arma::uvec& alt_idx,
+    const arma::uvec& choice_idx,
+    const Rcpp::IntegerVector& M,
+    const arma::vec& weights,
+    const bool use_asc = true,
+    const bool include_outside_option = false
+) {
+  const int N = M.size();
+  const int K = X.n_cols;
+  const int n_params = theta.n_elem;
+
+  const MnlParams par = parse_mnl_theta(theta, K, use_asc, include_outside_option);
+  validate_choice_data(X, alt_idx, M, use_asc, par.delta, &weights, &choice_idx);
+
+  // alt_idx is 1-based indexing => shift to 0-based indexing
+  arma::uvec alt_idx0 = alt_idx - 1;
+
+  // Compute prefix sums for indexing
+  const Rcpp::IntegerVector S = compute_prefix_sum(M);
+
+  // Pre-compute base utility for all individuals (single BLAS call)
+  arma::vec base_util = compute_base_util(X, par.beta, alt_idx0, use_asc, par.delta);
+
+  // --- Serial pre-loop validation of chosen-alternative indices ---
+  for (int i = 0; i < N; ++i) {
+    int chosen = choice_idx[i];
+    if (!include_outside_option) chosen -= 1;
+    const int num_choices_i = include_outside_option ? M[i] + 1 : M[i];
+    if (chosen < 0 || chosen >= num_choices_i) {
+      Rcpp::stop("Invalid chosen alternative index for individual %d (mnl_bhhh_parallel)", i);
+    }
+  }
+
+  // Global BHHH accumulator
+  arma::mat global_bhhh = arma::zeros(n_params, n_params);
+
+#ifdef _OPENMP
+#pragma omp parallel
+#endif
+  {
+    // Thread-local accumulator
+    arma::mat local_bhhh = arma::zeros(n_params, n_params);
+    arma::vec diff_vec; // resized per individual
+    arma::vec s_i;      // per-individual score
+
+#ifdef _OPENMP
+#pragma omp for schedule(dynamic)
+#endif
+    for (int i = 0; i < N; ++i) {
+      const int m_i         = M[i];
+      const int num_choices = include_outside_option ? m_i + 1 : m_i;
+      const int start_idx   = S[i];
+      const int end_idx     = start_idx + m_i - 1;
+      const double w_i      = weights[i];
+      const auto X_i        = X.rows(start_idx, end_idx); // M[i] x K
+      arma::uvec alt_idx0_i = alt_idx0.subvec(start_idx, end_idx); // M[i]
+
+      // Build utility vector V_i
+      arma::vec V_i(num_choices);
+      arma::vec inside_utils = base_util.subvec(start_idx, end_idx);
+      fill_choice_utilities(V_i, inside_utils, num_choices, include_outside_option);
+
+      // Probabilities
+      arma::vec P_i;
+      stable_softmax(V_i, P_i);
+
+      // Chosen alternative (validated serially above)
+      int chosen_alt = choice_idx[i];
+      if (!include_outside_option) chosen_alt -= 1;
+
+      // diff_vec[a] = 1{a == chosen_alt} - P_i[a]  (same as gradient kernel)
+      diff_vec.set_size(num_choices);
+      diff_vec = -P_i;
+      diff_vec(chosen_alt) += 1.0;
+
+      // Assemble the (weight-free) per-individual score s_i.
+      s_i.zeros(n_params);
+
+      // Beta block
+      if (include_outside_option) {
+        const auto diff_inside = diff_vec.subvec(1, m_i); // m_i elements
+        s_i.subvec(0, K - 1) = X_i.t() * diff_inside;
+      } else {
+        s_i.subvec(0, K - 1) = X_i.t() * diff_vec;
+      }
+
+      // Delta block (scatter; scale = 1, weight applied to the outer product)
+      if (use_asc) {
+        if (include_outside_option) {
+          scatter_delta_grad(s_i, K, diff_vec.subvec(1, m_i), alt_idx0_i,
+                             m_i, include_outside_option, 1.0);
+        } else {
+          scatter_delta_grad(s_i, K, diff_vec, alt_idx0_i,
+                             m_i, include_outside_option, 1.0);
+        }
+      }
+
+      local_bhhh += w_i * s_i * s_i.t();
+    } // end of i loop
+
+#ifdef _OPENMP
+#pragma omp critical
+#endif
+    {
+      global_bhhh += local_bhhh;
+    }
+  } // end parallel region
+
+  // Return PSD information matrix (same sign convention as negated Hessian).
+  return global_bhhh;
+}
+
+// Per-situation score matrix for the multinomial logit model (internal).
+//
+// Returns the N x n_params matrix whose row i is the weight-free score
+// s_i = d log P_i / d theta (positive gradient of situation i's
+// log-likelihood contribution). Same loop body as mnl_bhhh_parallel with the
+// outer-product accumulator replaced by a row write; weights are applied on
+// the R side (see .assemble_score_vcov in R/classes.R).
+// [[Rcpp::export]]
+arma::mat mnl_scores_parallel(
+    const arma::vec& theta,
+    const arma::mat& X,
+    const arma::uvec& alt_idx,
+    const arma::uvec& choice_idx,
+    const Rcpp::IntegerVector& M,
+    const bool use_asc = true,
+    const bool include_outside_option = false
+) {
+  const int N = M.size();
+  const int K = X.n_cols;
+  const int n_params = theta.n_elem;
+
+  const MnlParams par = parse_mnl_theta(theta, K, use_asc, include_outside_option);
+  validate_choice_data(X, alt_idx, M, use_asc, par.delta, nullptr, &choice_idx);
+
+  // alt_idx is 1-based indexing => shift to 0-based indexing
+  arma::uvec alt_idx0 = alt_idx - 1;
+
+  // Compute prefix sums for indexing
+  const Rcpp::IntegerVector S = compute_prefix_sum(M);
+
+  // Pre-compute base utility for all individuals (single BLAS call)
+  arma::vec base_util = compute_base_util(X, par.beta, alt_idx0, use_asc, par.delta);
+
+  // --- Serial pre-loop validation of chosen-alternative indices ---
+  for (int i = 0; i < N; ++i) {
+    int chosen = choice_idx[i];
+    if (!include_outside_option) chosen -= 1;
+    const int num_choices_i = include_outside_option ? M[i] + 1 : M[i];
+    if (chosen < 0 || chosen >= num_choices_i) {
+      Rcpp::stop("Invalid chosen alternative index for individual %d (mnl_scores_parallel)", i);
+    }
+  }
+
+  // Output: one row per choice situation (each written by exactly one
+  // iteration, so no accumulator or critical section is needed).
+  arma::mat scores(N, n_params);
+
+#ifdef _OPENMP
+#pragma omp parallel
+#endif
+  {
+    arma::vec diff_vec; // resized per individual
+    arma::vec s_i;      // per-individual score
+
+#ifdef _OPENMP
+#pragma omp for schedule(dynamic)
+#endif
+    for (int i = 0; i < N; ++i) {
+      const int m_i         = M[i];
+      const int num_choices = include_outside_option ? m_i + 1 : m_i;
+      const int start_idx   = S[i];
+      const int end_idx     = start_idx + m_i - 1;
+      const auto X_i        = X.rows(start_idx, end_idx); // M[i] x K
+      arma::uvec alt_idx0_i = alt_idx0.subvec(start_idx, end_idx); // M[i]
+
+      // Build utility vector V_i
+      arma::vec V_i(num_choices);
+      arma::vec inside_utils = base_util.subvec(start_idx, end_idx);
+      fill_choice_utilities(V_i, inside_utils, num_choices, include_outside_option);
+
+      // Probabilities
+      arma::vec P_i;
+      stable_softmax(V_i, P_i);
+
+      // Chosen alternative (validated serially above)
+      int chosen_alt = choice_idx[i];
+      if (!include_outside_option) chosen_alt -= 1;
+
+      // diff_vec[a] = 1{a == chosen_alt} - P_i[a]  (same as gradient kernel)
+      diff_vec.set_size(num_choices);
+      diff_vec = -P_i;
+      diff_vec(chosen_alt) += 1.0;
+
+      // Assemble the (weight-free) per-individual score s_i.
+      s_i.zeros(n_params);
+
+      // Beta block
+      if (include_outside_option) {
+        const auto diff_inside = diff_vec.subvec(1, m_i); // m_i elements
+        s_i.subvec(0, K - 1) = X_i.t() * diff_inside;
+      } else {
+        s_i.subvec(0, K - 1) = X_i.t() * diff_vec;
+      }
+
+      // Delta block (scatter; scale = 1)
+      if (use_asc) {
+        if (include_outside_option) {
+          scatter_delta_grad(s_i, K, diff_vec.subvec(1, m_i), alt_idx0_i,
+                             m_i, include_outside_option, 1.0);
+        } else {
+          scatter_delta_grad(s_i, K, diff_vec, alt_idx0_i,
+                             m_i, include_outside_option, 1.0);
+        }
+      }
+
+      scores.row(i) = s_i.t();
+    } // end of i loop
+  } // end parallel region
+
+  return scores;
 }
 
 //' Prediction of choice probabilities and utilities based on fitted model
@@ -208,11 +466,11 @@ Rcpp::List mnl_loglik_gradient_parallel(
 //' dt[, choice := 0L]
 //' dt[, choice := sample(c(1L, rep(0L, J - 1))), by = id]
 //' fit <- run_mnlogit(dt, "id", "alt", "choice", c("x1", "x2"))
-//' pred <- mnl_predict(coef(fit), fit$data$X, fit$data$alt_idx,
+//' pred <- choicer:::mnl_predict(coef(fit), fit$data$X, fit$data$alt_idx,
 //'   fit$data$M, use_asc = TRUE)
 //' head(pred$choice_prob)
 //' }
-//' @export
+//' @keywords internal
 // [[Rcpp::export]]
 Rcpp::List mnl_predict(
     const arma::vec& theta,
@@ -225,29 +483,10 @@ Rcpp::List mnl_predict(
   // Extract beta and delta from theta
   const int N = M.size();
   const int K = X.n_cols;
-  const int n_params = theta.n_elem;
 
-  arma::vec beta = theta.subvec(0, K - 1);
-  arma::vec delta;
-  int delta_length = 0;
+  const MnlParams par = parse_mnl_theta(theta, K, use_asc, include_outside_option);
+  validate_choice_data(X, alt_idx, M, use_asc, par.delta);
 
-  if (use_asc) {
-    delta_length = n_params - K;
-    if (delta_length <= 0) {
-      Rcpp::stop("Error: ASC parameters expected but not provided.");
-    }
-    if (include_outside_option) {
-      // delta covers all J inside alternatives
-      delta = theta.subvec(K, n_params - 1);
-    } else {
-      // delta_1 = 0 fixed
-      delta = arma::zeros(delta_length + 1);
-      delta.subvec(1, delta_length) = theta.subvec(K, n_params - 1);
-    }
-  } else {
-    delta_length = 0;
-    delta = arma::zeros(delta_length);
-  }
   // alt_idx is 1-based indexing => shift to 0-based indexing
   arma::uvec alt_idx0 = alt_idx - 1;
 
@@ -255,8 +494,7 @@ Rcpp::List mnl_predict(
   Rcpp::IntegerVector S = compute_prefix_sum(M);
 
   // Pre-compute base utility for all individuals (single BLAS call)
-  arma::vec base_util = X * beta;
-  if (use_asc) base_util += delta.elem(alt_idx0);
+  arma::vec base_util = compute_base_util(X, par.beta, alt_idx0, use_asc, par.delta);
 
   // Preallocate predicted values
   arma::vec V_all = arma::zeros(X.n_rows);
@@ -272,22 +510,15 @@ Rcpp::List mnl_predict(
     const int end_idx     = start_idx + m_i - 1;
 
     // Build utility vector V_i
-    arma::vec V_i = arma::zeros(num_choices);
+    arma::vec V_i(num_choices);
     arma::vec inside_utils = base_util.subvec(start_idx, end_idx);
-
-    if (include_outside_option) {
-      // outside option at index 0
-      V_i.subvec(1, num_choices - 1) = inside_utils;
-    } else {
-      V_i = inside_utils;
-    }
+    fill_choice_utilities(V_i, inside_utils, num_choices, include_outside_option);
 
     V_all.subvec(start_idx, end_idx) = inside_utils;
-    
+
     // Vector of choice probabilities
-    V_i -= V_i.max(); // for numerical stability
-    double log_denom = std::log(arma::sum(arma::exp(V_i)));
-    const arma::vec P_i = arma::exp(V_i - log_denom);
+    arma::vec P_i;
+    stable_softmax(V_i, P_i);
 
     if (include_outside_option) {
       P_all.subvec(start_idx, end_idx) = P_i.subvec(1, num_choices - 1);
@@ -323,8 +554,7 @@ arma::vec mnl_predict_shares_internal(
     Rcpp::stop("Error: Sum of weights must be positive.");
   }
   // Pre-compute base utility for all individuals (single BLAS call)
-  arma::vec base_util = X * beta;
-  if (use_asc) base_util += delta.elem(alt_idx0);
+  arma::vec base_util = compute_base_util(X, beta, alt_idx0, use_asc, delta);
 
   // Initialize global accumulator for predicted shares
   arma::vec global_shares = arma::zeros(num_alts);
@@ -348,20 +578,13 @@ arma::vec mnl_predict_shares_internal(
     arma::uvec alt_idx0_i = alt_idx0.subvec(start_idx, end_idx); // M[i]
 
     // Build utility vector V_i
-    arma::vec V_i = arma::zeros(num_choices);
+    arma::vec V_i(num_choices);
     arma::vec inside_utils = base_util.subvec(start_idx, end_idx);
+    fill_choice_utilities(V_i, inside_utils, num_choices, include_outside_option);
 
-    if (include_outside_option) {
-      // outside option at index 0
-      V_i.subvec(1, num_choices - 1) = inside_utils;
-    } else {
-      V_i = inside_utils;
-    }
-   
     // Vector of choice probabilities
-    V_i -= V_i.max(); // for numerical stability
-    double log_denom = std::log(arma::sum(arma::exp(V_i)));
-    const arma::vec P_i = arma::exp(V_i - log_denom);
+    arma::vec P_i;
+    stable_softmax(V_i, P_i);
 
     // Sum probabilities by alternative
     if (include_outside_option) {
@@ -411,11 +634,11 @@ arma::vec mnl_predict_shares_internal(
 //' dt[, choice := 0L]
 //' dt[, choice := sample(c(1L, rep(0L, J - 1))), by = id]
 //' fit <- run_mnlogit(dt, "id", "alt", "choice", c("x1", "x2"))
-//' shares <- mnl_predict_shares(coef(fit), fit$data$X, fit$data$alt_idx,
+//' shares <- choicer:::mnl_predict_shares(coef(fit), fit$data$X, fit$data$alt_idx,
 //'   fit$data$M, fit$data$weights, use_asc = TRUE)
 //' shares
 //' }
-//' @export
+//' @keywords internal
 // [[Rcpp::export]]
 arma::vec mnl_predict_shares(
     const arma::vec& theta,            // K + J - 1 or K + J vector with model parameters
@@ -428,29 +651,10 @@ arma::vec mnl_predict_shares(
 ) {
   // Extract beta and delta from theta
   const int K = X.n_cols;
-  const int n_params = theta.n_elem;
 
-  arma::vec beta = theta.subvec(0, K - 1);
-  arma::vec delta;
-  int delta_length = 0;
+  const MnlParams par = parse_mnl_theta(theta, K, use_asc, include_outside_option);
+  validate_choice_data(X, alt_idx, M, use_asc, par.delta, &weights);
 
-  if (use_asc) {
-    delta_length = n_params - K;
-    if (delta_length <= 0) {
-      Rcpp::stop("Error: ASC parameters expected but not provided.");
-    }
-    if (include_outside_option) {
-      // delta covers all J inside alternatives
-      delta = theta.subvec(K, n_params - 1);
-    } else {
-      // delta_1 = 0 fixed
-      delta = arma::zeros(delta_length + 1);
-      delta.subvec(1, delta_length) = theta.subvec(K, n_params - 1);
-    }
-  } else {
-    delta_length = 0;
-    delta = arma::zeros(delta_length);
-  }
   // alt_idx is 1-based indexing => shift to 0-based indexing
   arma::uvec alt_idx0 = alt_idx - 1;
 
@@ -461,7 +665,7 @@ arma::vec mnl_predict_shares(
   int num_alts = include_outside_option ? (alt_idx.max() + 1) :  alt_idx.max();
 
   arma::vec global_shares = mnl_predict_shares_internal(
-    X, beta, alt_idx0, M, S, weights, delta, num_alts, use_asc, include_outside_option
+    X, par.beta, alt_idx0, M, S, weights, par.delta, num_alts, use_asc, include_outside_option
   );
 
   return global_shares;
@@ -514,9 +718,13 @@ arma::vec blp_contraction(
 
   // total number of distinct alternatives
   int num_alts = include_outside_option ? (delta.n_elem + 1) :  delta.n_elem;
-  if (target_shares.n_elem != num_alts) {
+  if (target_shares.n_elem != static_cast<arma::uword>(num_alts)) {
     Rcpp::stop("Error: target_shares must have the same length as the total number of alternatives.");
   }
+  if (arma::any(target_shares <= 0)) {
+    Rcpp::stop("Error: all target_shares must be strictly positive (log(share) is undefined otherwise).");
+  }
+  validate_choice_data(X, alt_idx, M, use_asc, delta, &weights);
 
   // alt_idx is 1-based indexing => shift to 0-based indexing
   arma::uvec alt_idx0 = alt_idx - 1;
@@ -524,18 +732,31 @@ arma::vec blp_contraction(
   // Compute prefix sums for indexing
   Rcpp::IntegerVector S = compute_prefix_sum(M);
 
-  // Initialize delta_old
+  // The iteration bookkeeping (delta_old/delta_new, target/predicted log-shares,
+  // residual) lives in the outside-inclusive share space of length num_alts:
+  //   index 0 = outside option (when present), indices 1..J = inside alts.
+  // But mnl_predict_shares_internal indexes delta by INSIDE-alt index
+  // (alt_idx0 in {0..J-1}) and expects a length-J inside-delta vector (the
+  // outside option is handled separately via include_outside_option). We
+  // therefore feed it delta_old.subvec(1, num_alts - 1) when an outside option
+  // is present, and pin the outside slot delta_old[0] = 0 throughout (the
+  // outside option's utility is the fixed normalization).
   arma::vec delta_old = arma::zeros(num_alts);
   if (include_outside_option) {
     delta_old.subvec(1, num_alts - 1) = delta; // outside option at index 0
+    delta_old[0] = 0.0;
   } else {
     delta_old = delta; // no outside option, delta already has J elements
     delta_old -= delta_old[0];
   }
 
+  arma::vec inside_delta_old = include_outside_option
+    ? arma::vec(delta_old.subvec(1, num_alts - 1))
+    : delta_old;
+
   // Initialize shares and delta_new
   arma::vec log_shares_old = mnl_predict_shares_internal(
-    X, beta, alt_idx0, M, S, weights, delta_old, num_alts, use_asc, include_outside_option
+    X, beta, alt_idx0, M, S, weights, inside_delta_old, num_alts, use_asc, include_outside_option
   );
   log_shares_old = arma::log(log_shares_old);
   arma::vec log_shares_target = arma::log(target_shares);
@@ -548,15 +769,23 @@ arma::vec blp_contraction(
 
   // iterate until convergence or until max_iter reached
   while (iter < max_iter) {
+      Rcpp::checkUserInterrupt(); // H4: allow user to interrupt long-running contraction
       delta_new = delta_old + (log_shares_target - log_shares_old);
+      if (include_outside_option) {
+        // Outside option's delta is the fixed normalization; pin it at 0.
+        delta_new[0] = 0.0;
+      }
       delta_diff = arma::abs(delta_new - delta_old);
       residual = arma::max(delta_diff);
       if (residual < tol) {
           break;
       }
       delta_old = delta_new;
+      inside_delta_old = include_outside_option
+        ? arma::vec(delta_old.subvec(1, num_alts - 1))
+        : delta_old;
       log_shares_old = mnl_predict_shares_internal(
-        X, beta, alt_idx0, M, S, weights, delta_old, num_alts, use_asc, include_outside_option
+        X, beta, alt_idx0, M, S, weights, inside_delta_old, num_alts, use_asc, include_outside_option
       );
       log_shares_old = arma::log(log_shares_old);
       ++iter;
@@ -598,11 +827,11 @@ arma::vec blp_contraction(
 //' dt[, choice := 0L]
 //' dt[, choice := sample(c(1L, rep(0L, J - 1))), by = id]
 //' fit <- run_mnlogit(dt, "id", "alt", "choice", c("x1", "x2"))
-//' H <- mnl_loglik_hessian_parallel(coef(fit), fit$data$X, fit$data$alt_idx,
+//' H <- choicer:::mnl_loglik_hessian_parallel(coef(fit), fit$data$X, fit$data$alt_idx,
 //'   fit$data$choice_idx, fit$data$M, fit$data$weights)
 //' dim(H)
 //' }
-//' @export
+//' @keywords internal
 // [[Rcpp::export]]
 arma::mat mnl_loglik_hessian_parallel(
     const arma::vec& theta,
@@ -622,35 +851,17 @@ arma::mat mnl_loglik_hessian_parallel(
   const int n_params = theta.n_elem;
 
   // Split theta into beta and delta (ASCs) as in your gradient function
-  arma::vec beta = theta.subvec(0, K - 1);
-  arma::vec delta;
-  int delta_length = 0;
-  
-  if (use_asc) {
-    delta_length = n_params - K;
-    if (delta_length <= 0) {
-      Rcpp::stop("Error: ASC parameters expected but not provided.");
-    }
-    if (include_outside_option) {
-      delta = theta.subvec(K, n_params - 1);
-    } else {
-      delta = arma::zeros(delta_length + 1);
-      delta.subvec(1, delta_length) = theta.subvec(K, n_params - 1);
-    }
-  } else {
-    delta_length = 0;
-    delta = arma::zeros(delta_length);
-  }
+  const MnlParams par = parse_mnl_theta(theta, K, use_asc, include_outside_option);
+  validate_choice_data(X, alt_idx, M, use_asc, par.delta, &weights);
 
   // alt_idx is 1-based indexing => shift to 0-based indexing
   arma::uvec alt_idx0 = alt_idx - 1;
-  
+
   // Compute prefix sums for indexing each individual's block in X / alt_idx
   const Rcpp::IntegerVector S = compute_prefix_sum(M);
 
   // Pre-compute base utility for all individuals (single BLAS call)
-  arma::vec base_util = X * beta;
-  if (use_asc) base_util += delta.elem(alt_idx0);
+  arma::vec base_util = compute_base_util(X, par.beta, alt_idx0, use_asc, par.delta);
 
   // Prepare global accumulator
   arma::mat global_hess = arma::zeros(n_params, n_params);
@@ -677,63 +888,115 @@ arma::mat mnl_loglik_hessian_parallel(
       arma::uvec alt_idx0_i = alt_idx0.subvec(start_idx, end_idx); // inside alt IDs (0-based), length M[i]
 
       // Build utility vector V_i
-      arma::vec V_i = arma::zeros(num_choices);
+      arma::vec V_i(num_choices);
       arma::vec inside_utils = base_util.subvec(start_idx, end_idx);
+      fill_choice_utilities(V_i, inside_utils, num_choices, include_outside_option);
 
-      if (include_outside_option) {
-        V_i.subvec(1, num_choices - 1) = inside_utils;
-      } else {
-        V_i = inside_utils;
-      }
-      
       // Calculate Probabilities ---------------------------------------------
-      V_i -= V_i.max(); // for numerical stability
-      double log_denom = std::log(arma::sum(arma::exp(V_i)));
-      arma::vec P_i = arma::exp(V_i - log_denom);
-      
-      // Calculate Hessian components for individual i -----------------------
-      arma::vec sum_P_Z    = arma::zeros(n_params);
-      arma::mat sum_P_Z_Zt = arma::zeros(n_params, n_params);
-      arma::vec Z_a        = arma::zeros(n_params);
+      arma::vec P_i;
+      stable_softmax(V_i, P_i);
 
-      for (int a = 0; a < num_choices; ++a) {
-        const double P_ia  = P_i[a];
-        
-        // Reset Z_a to zero
-        Z_a.zeros(); 
-        
-        // Construct Z_a (covariate vector for alternative a)
-        if (include_outside_option) {
-            if (a > 0) { // skip outside option (a=0)
-                // beta part
-                Z_a.subvec(0, K - 1) = X_i.row(a - 1).t();
-                // delta part
-                if (use_asc) {
-                    const int a_id = alt_idx0_i[a - 1]; // 0 ... J-1
-                    Z_a[K + a_id] = 1.0;
-                }
-            }
-            // if a == 0, Z_a remains all zeros
-        } else {
-            // beta part
-            Z_a.subvec(0, K - 1) = X_i.row(a).t();
-            // delta part
-            if (use_asc) {
-                const int a_id = alt_idx0_i[a]; // 0 ... J-1
-                if (a_id > 0) { // delta_0 is normalized to 0
-                    Z_a[K + (a_id - 1)] = 1.0;
-                }
+      // Calculate Hessian components for individual i -----------------------
+      // O2: Block decomposition — BB (beta-beta), BD (beta-delta), DD (delta-delta)
+      // O5: Exploit symmetry of BB and DD — accumulate upper triangle only, mirror after loop
+      const int J_asc = n_params - K;  // number of free ASC parameters (0 when use_asc=false)
+
+      arma::mat BB       = arma::zeros(K, K);          // beta-beta  (K x K, symmetric)
+      arma::vec mu_beta  = arma::zeros(K);              // P-weighted mean of x_a
+      arma::mat BD       = (J_asc > 0) ? arma::zeros(K, J_asc) : arma::mat(); // beta-delta (K x J_asc)
+      arma::vec mu_delta = (J_asc > 0) ? arma::zeros(J_asc) : arma::vec();    // P-weighted ASC indicator sums
+
+      for (int a = 0; a < m_i; ++a) {
+        // Probability of this inside alternative
+        const double p_a = include_outside_option ? P_i[a + 1] : P_i[a];
+
+        // Covariate column vector for this inside alternative
+        const arma::vec x_a = X_i.row(a).t();   // K x 1
+
+        // --- Beta-beta block: accumulate upper triangle of p_a * x_a x_a^T ---
+        // O5: only upper triangle (c >= r), mirror after loop
+        for (int r = 0; r < K; ++r) {
+            const double p_x_r = p_a * x_a[r];
+            for (int c = r; c < K; ++c) {
+                BB(r, c) += p_x_r * x_a[c];
             }
         }
-        
-        // Accumulate H_i components
-        sum_P_Z    += P_ia * Z_a;
-        sum_P_Z_Zt += P_ia * (Z_a * Z_a.t()); // outer product
+        mu_beta += p_a * x_a;
+
+        // --- Delta position: skip if no free ASCs or if this alt's ASC is normalized ---
+        if (J_asc > 0) {
+            int delta_pos;
+            bool has_free_asc;
+            if (include_outside_option) {
+                delta_pos    = static_cast<int>(alt_idx0_i[a]);  // 0 ... J-1
+                has_free_asc = true;
+            } else {
+                const int a_id = static_cast<int>(alt_idx0_i[a]);
+                if (a_id == 0) {
+                    has_free_asc = false;
+                    delta_pos    = -1;
+                } else {
+                    has_free_asc = true;
+                    delta_pos    = a_id - 1;  // 0 ... J-2
+                }
+            }
+
+            if (has_free_asc) {
+                // Beta-delta block: scatter p_a * x_a into column delta_pos
+                BD.col(delta_pos) += p_a * x_a;
+                // Delta accumulator (diagonal of diag(mu_delta) before outer-product subtraction)
+                mu_delta[delta_pos] += p_a;
+            }
+        }
       } // end of alt loop
 
-      // Compute H_i and add to local accumulator
-      // H_i = sum_P_Z_Zt - (sum_P_Z * sum_P_Z.t())
-      local_hess += w_i * ( (sum_P_Z * sum_P_Z.t()) - sum_P_Z_Zt );
+      // O5: Mirror BB lower triangle from upper triangle
+      for (int r = 0; r < K; ++r) {
+          for (int c = r + 1; c < K; ++c) {
+              BB(c, r) = BB(r, c);
+          }
+      }
+
+      // Subtract outer products to complete the variance terms:
+      // BB = sum_a p_a x_a x_a^T - mu_beta mu_beta^T  (P-weighted covariance of covariates)
+      BB -= mu_beta * mu_beta.t();
+
+      // Scatter blocks into local_hess with the correct sign convention:
+      // local_hess accumulates w_i * (sum_P_Z sum_P_Z^T - sum_P_Z_Zt) = -w_i * Var_P(Z)
+      // Blocks BB, BD, DD compute +Var_P(Z) direction, so we subtract (local_hess -= w_i * block)
+      // Final return -global_hess then gives the Hessian of the negative log-likelihood.
+
+      // Beta-beta block (rows 0:K-1, cols 0:K-1)
+      local_hess.submat(0, 0, K-1, K-1) -= w_i * BB;
+
+      if (J_asc > 0) {
+          // BD = sum_a p_a x_a e_{d(a)}^T - mu_beta mu_delta^T  (K x J_asc)
+          BD -= mu_beta * mu_delta.t();
+
+          // Delta-delta block: diag(mu_delta) - mu_delta mu_delta^T
+          // Assemble upper triangle only, then mirror
+          arma::mat DD_upper = arma::zeros(J_asc, J_asc);
+          for (int r = 0; r < J_asc; ++r) {
+              DD_upper(r, r) += mu_delta[r];                        // diagonal: sum of p_a for ASC r
+              for (int c = r + 1; c < J_asc; ++c) {
+                  DD_upper(r, c) -= mu_delta[r] * mu_delta[c];     // off-diagonal: -p_r * p_c
+              }
+              DD_upper(r, r) -= mu_delta[r] * mu_delta[r];         // diagonal: p_r - p_r^2
+          }
+          // Mirror DD lower triangle from upper triangle
+          for (int r = 0; r < J_asc; ++r) {
+              for (int c = r + 1; c < J_asc; ++c) {
+                  DD_upper(c, r) = DD_upper(r, c);
+              }
+          }
+
+          // Beta-delta block (rows 0:K-1, cols K:n_params-1)
+          local_hess.submat(0, K, K-1, n_params-1) -= w_i * BD;
+          // Delta-beta block = transpose of beta-delta
+          local_hess.submat(K, 0, n_params-1, K-1) -= w_i * BD.t();
+          // Delta-delta block (rows K:n_params-1, cols K:n_params-1)
+          local_hess.submat(K, K, n_params-1, n_params-1) -= w_i * DD_upper;
+      }
 
     } // end of i loop
 
@@ -778,11 +1041,11 @@ arma::mat mnl_loglik_hessian_parallel(
 //' dt[, choice := 0L]
 //' dt[, choice := sample(c(1L, rep(0L, J - 1))), by = id]
 //' fit <- run_mnlogit(dt, "id", "alt", "choice", c("x1", "x2"))
-//' elas <- mnl_elasticities_parallel(coef(fit), fit$data$X, fit$data$alt_idx,
+//' elas <- choicer:::mnl_elasticities_parallel(coef(fit), fit$data$X, fit$data$alt_idx,
 //'   fit$data$choice_idx, fit$data$M, fit$data$weights, elast_var_idx = 1L)
 //' elas
 //' }
-//' @export
+//' @keywords internal
 // [[Rcpp::export]]
 arma::mat mnl_elasticities_parallel(
     const arma::vec& theta,
@@ -798,8 +1061,7 @@ arma::mat mnl_elasticities_parallel(
   // --- 1. Parameter and Variable Setup ---
   const int N = M.size();
   const int K = X.n_cols;
-  const int n_params = theta.n_elem;
-  
+
   // Convert 1-based R index to 0-based C++ index
   const int var_idx = elast_var_idx - 1;
   if (var_idx < 0 || var_idx >= K) {
@@ -807,42 +1069,24 @@ arma::mat mnl_elasticities_parallel(
   }
 
   // Extract beta and delta (same logic as loglik function)
-  arma::vec beta = theta.subvec(0, K - 1);
-  const double beta_k = beta(var_idx); // The coefficient for our variable
-  arma::vec delta;
-  int delta_length = 0;
+  const MnlParams par = parse_mnl_theta(theta, K, use_asc, include_outside_option);
+  validate_choice_data(X, alt_idx, M, use_asc, par.delta, &weights);
+  const double beta_k = par.beta(var_idx); // The coefficient for our variable
 
-  if (use_asc) {
-    delta_length = n_params - K;
-    if (delta_length <= 0) {
-      Rcpp::stop("Error: ASC parameters expected but not provided.");
-    }
-    if (include_outside_option) {
-      delta = theta.subvec(K, n_params - 1);
-    } else {
-      delta = arma::zeros(delta_length + 1);
-      delta.subvec(1, delta_length) = theta.subvec(K, n_params - 1);
-    }
-  } else {
-    delta_length = 0;
-    delta = arma::zeros(delta_length);
-  }
-  
   // alt_idx is 1-based indexing => shift to 0-based indexing
   arma::uvec alt_idx0 = alt_idx - 1;
 
   // Determine total number of alternatives for the output matrix
   // J_inside = number of alternatives (with or without normalization)
   // J_total = total size of matrix (J_inside + 1 if outside option)
-  const int J_inside = use_asc ? delta.n_elem : (arma::max(alt_idx0) + 1);
-  const int J_total = include_outside_option ? J_inside + 1 : J_inside;
+  const int J_inside = compute_J_inside(use_asc, par.delta, alt_idx0);
+  const int J_total = compute_J_total(J_inside, include_outside_option);
 
   // Compute prefix sums for indexing
   const Rcpp::IntegerVector S = compute_prefix_sum(M);
 
   // Pre-compute base utility for all individuals (single BLAS call)
-  arma::vec base_util = X * beta;
-  if (use_asc) base_util += delta.elem(alt_idx0);
+  arma::vec base_util = compute_base_util(X, par.beta, alt_idx0, use_asc, par.delta);
 
   // Prepare global accumulators
   arma::mat global_elas_matrix = arma::zeros(J_total, J_total);
@@ -869,21 +1113,15 @@ arma::mat mnl_elasticities_parallel(
       arma::uvec alt_idx0_i = alt_idx0.subvec(start_idx, end_idx); // M[i]
 
       // --- 2. Compute Probabilities (same as loglik) ---
-      arma::vec V_i = arma::zeros(num_choices);
+      arma::vec V_i(num_choices);
       arma::vec inside_utils = base_util.subvec(start_idx, end_idx);
+      fill_choice_utilities(V_i, inside_utils, num_choices, include_outside_option);
 
-      if (include_outside_option) {
-        V_i.subvec(1, num_choices - 1) = inside_utils;
-      } else {
-        V_i = inside_utils;
-      }
-
-      V_i -= V_i.max(); // for numerical stability
-      double log_denom = std::log(arma::accu(arma::exp(V_i)));
-      arma::vec P_i = arma::exp(V_i - log_denom);
+      arma::vec P_i;
+      stable_softmax(V_i, P_i);
 
       // --- 3. Prepare Data for Elasticity Calculation ---
-      
+
       // Get the values of the variable k for this individual's choice set
       arma::vec x_k_i = arma::zeros(num_choices);
       if (include_outside_option) {
@@ -895,14 +1133,9 @@ arma::mat mnl_elasticities_parallel(
 
       // Map local choice set indices (0...num_choices-1) to global
       // alternative indices (0...J_total-1)
-      arma::uvec global_j_map(num_choices);
-      if (include_outside_option) {
-        global_j_map[0] = 0; // Outside option is global index 0
-        global_j_map.subvec(1, m_i) = alt_idx0_i + 1; // Inside alts are 1...J
-      } else {
-        global_j_map = alt_idx0_i; // No outside option, alts are 0...J-1
-      }
-      
+      arma::uvec global_j_map =
+          build_global_alt_map(alt_idx0_i, m_i, include_outside_option);
+
       // --- 4. Compute Individual Elasticity Matrix ---
       // E_n(i, j) = elasticity of P_ni w.r.t attribute x_njk
       for (int i_local = 0; i_local < num_choices; ++i_local) {
@@ -978,11 +1211,11 @@ arma::mat mnl_elasticities_parallel(
 //' dt[, choice := 0L]
 //' dt[, choice := sample(c(1L, rep(0L, J - 1))), by = id]
 //' fit <- run_mnlogit(dt, "id", "alt", "choice", c("x1", "x2"))
-//' dr <- mnl_diversion_ratios_parallel(coef(fit), fit$data$X, fit$data$alt_idx,
+//' dr <- choicer:::mnl_diversion_ratios_parallel(coef(fit), fit$data$X, fit$data$alt_idx,
 //'   fit$data$M, fit$data$weights)
 //' dr
 //' }
-//' @export
+//' @keywords internal
 // [[Rcpp::export]]
 arma::mat mnl_diversion_ratios_parallel(
     const arma::vec& theta,
@@ -996,42 +1229,23 @@ arma::mat mnl_diversion_ratios_parallel(
   // --- 1. Parameter and Variable Setup ---
   const int N = M.size();
   const int K = X.n_cols;
-  const int n_params = theta.n_elem;
 
   // Extract beta and delta (same logic as elasticities/loglik)
-  arma::vec beta = theta.subvec(0, K - 1);
-  arma::vec delta;
-  int delta_length = 0;
-
-  if (use_asc) {
-    delta_length = n_params - K;
-    if (delta_length <= 0) {
-      Rcpp::stop("Error: ASC parameters expected but not provided.");
-    }
-    if (include_outside_option) {
-      delta = theta.subvec(K, n_params - 1);
-    } else {
-      delta = arma::zeros(delta_length + 1);
-      delta.subvec(1, delta_length) = theta.subvec(K, n_params - 1);
-    }
-  } else {
-    delta_length = 0;
-    delta = arma::zeros(delta_length);
-  }
+  const MnlParams par = parse_mnl_theta(theta, K, use_asc, include_outside_option);
+  validate_choice_data(X, alt_idx, M, use_asc, par.delta, &weights);
 
   // alt_idx is 1-based indexing => shift to 0-based indexing
   arma::uvec alt_idx0 = alt_idx - 1;
 
   // Determine total number of alternatives for the output matrix
-  const int J_inside = use_asc ? delta.n_elem : (arma::max(alt_idx0) + 1);
-  const int J_total = include_outside_option ? J_inside + 1 : J_inside;
+  const int J_inside = compute_J_inside(use_asc, par.delta, alt_idx0);
+  const int J_total = compute_J_total(J_inside, include_outside_option);
 
   // Compute prefix sums for indexing
   const Rcpp::IntegerVector S = compute_prefix_sum(M);
 
   // Pre-compute base utility for all individuals (single BLAS call)
-  arma::vec base_util = X * beta;
-  if (use_asc) base_util += delta.elem(alt_idx0);
+  arma::vec base_util = compute_base_util(X, par.beta, alt_idx0, use_asc, par.delta);
 
   // Prepare global accumulators
   // numerator(k, j) = sum_n w_n * P_nj * P_nk  (for k != j)
@@ -1060,27 +1274,16 @@ arma::mat mnl_diversion_ratios_parallel(
       arma::uvec alt_idx0_i = alt_idx0.subvec(start_idx, end_idx); // M[i]
 
       // --- 2. Compute Probabilities ---
-      arma::vec V_i = arma::zeros(num_choices);
+      arma::vec V_i(num_choices);
       arma::vec inside_utils = base_util.subvec(start_idx, end_idx);
+      fill_choice_utilities(V_i, inside_utils, num_choices, include_outside_option);
 
-      if (include_outside_option) {
-        V_i.subvec(1, num_choices - 1) = inside_utils;
-      } else {
-        V_i = inside_utils;
-      }
-
-      V_i -= V_i.max(); // for numerical stability
-      double log_denom = std::log(arma::accu(arma::exp(V_i)));
-      arma::vec P_i = arma::exp(V_i - log_denom);
+      arma::vec P_i;
+      stable_softmax(V_i, P_i);
 
       // --- 3. Map local indices to global alternative indices ---
-      arma::uvec global_j_map(num_choices);
-      if (include_outside_option) {
-        global_j_map[0] = 0; // Outside option is global index 0
-        global_j_map.subvec(1, m_i) = alt_idx0_i + 1; // Inside alts are 1...J
-      } else {
-        global_j_map = alt_idx0_i; // No outside option, alts are 0...J-1
-      }
+      arma::uvec global_j_map =
+          build_global_alt_map(alt_idx0_i, m_i, include_outside_option);
 
       // --- 4. Accumulate numerator and denominator ---
       for (int j_local = 0; j_local < num_choices; ++j_local) {

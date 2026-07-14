@@ -14,10 +14,14 @@ run_mnlogit(
   optimizer = NULL,
   control = list(),
   weights = NULL,
+  weights_col = NULL,
   outside_opt_label = NULL,
   include_outside_option = FALSE,
   use_asc = TRUE,
   keep_data = TRUE,
+  scale_vars = c("none", "sd", "mad", "iqr"),
+  se_method = c("hessian", "bhhh", "sandwich", "cluster"),
+  cluster_col = NULL,
   nloptr_opts = NULL
 )
 }
@@ -46,7 +50,14 @@ argument is forwarded; otherwise it is silently ignored.}
 \item{control}{List of optimizer-specific control parameters passed to the
 chosen optimizer (e.g., \code{list(maxeval = 2000)} for nloptr).}
 
-\item{weights}{Optional vector of weights for each choice situation. If \code{NULL}, equal weights are used.}
+\item{weights}{Optional vector of weights for each choice situation. If \code{NULL}, equal weights are used. All weights must be finite and strictly positive.}
+
+\item{weights_col}{Optional name of a column in \code{data} holding per-row
+weights (convenience workflow only). The column must be constant within each
+\code{id_col} (one weight per choice situation) and is collapsed accordingly.
+Mutually exclusive with \code{weights}. All weights must be finite and strictly
+positive. Used for choice-based / WESML
+weighting; pair with \code{se_method = "sandwich"} for valid inference.}
 
 \item{outside_opt_label}{Label for the outside option (if any). If \code{NULL}, no outside option is assumed.}
 
@@ -56,6 +67,30 @@ chosen optimizer (e.g., \code{list(maxeval = 2000)} for nloptr).}
 
 \item{keep_data}{Logical. If \code{TRUE} (default), stores prepared data in the
 returned object for \code{predict()} and post-estimation functions.}
+
+\item{scale_vars}{Pre-estimation column scaling for the design matrix. One of
+\code{"none"} (default), \code{"sd"} (sample standard deviation),
+\code{"mad"} (\code{stats::mad}), or \code{"iqr"}
+(\code{stats::IQR(x) / 1.349}). When not \code{"none"}, every column of
+\code{X} is divided by the chosen scale before optimization to improve
+Hessian conditioning. Coefficients and standard errors are back-transformed
+to the user's natural units via the delta method, so reported quantities
+are invariant to this choice.}
+
+\item{se_method}{Method for computing standard errors: \code{"hessian"}
+(default, analytical Hessian), \code{"bhhh"} (outer product of gradients),
+\code{"sandwich"} (robust Huber--White / WESML variance
+\eqn{A^{-1} B A^{-1}}), or \code{"cluster"} (cluster-robust sandwich;
+requires \code{cluster_col} or a prepared \code{input_data} with a
+\code{cluster} field). Use \code{"sandwich"} under choice-based / WESML
+weighting. Any of these can also be recomputed post hoc via
+\code{vcov(fit, type = )}.}
+
+\item{cluster_col}{Optional name of a column in \code{data} holding cluster
+labels for cluster-robust standard errors (e.g. a person id when the same
+decision maker contributes several choice situations). Must be constant
+within each \code{id_col}. Supplying \code{cluster_col} without an explicit
+\code{se_method} selects \code{se_method = "cluster"}.}
 
 \item{nloptr_opts}{Deprecated. Use \code{optimizer} and \code{control} instead.}
 }

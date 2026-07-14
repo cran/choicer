@@ -95,12 +95,29 @@
 #' @param optimizer Optimizer to use: \code{"nloptr"} (default), \code{"optim"},
 #'   or a custom function. See \code{\link{run_mnlogit}} for details.
 #' @param control List of optimizer-specific control parameters.
-#' @param se_method Method for computing standard errors. Either
+#' @param se_method Method for computing standard errors. One of
 #'   \code{"hessian"} (default) for the analytical Hessian of the simulated
-#'   log-likelihood, or \code{"bhhh"} for the BHHH/outer-product-of-gradients
-#'   (OPG) estimator. BHHH scales better to large problems (many alternatives
-#'   or simulation draws) but may underestimate standard errors in finite
-#'   samples or away from the optimum.
+#'   log-likelihood, \code{"bhhh"} for the BHHH/outer-product-of-gradients
+#'   (OPG) estimator, \code{"sandwich"} for the robust (Huber-White)
+#'   variance \eqn{V = A^{-1} B A^{-1}} (bread \eqn{A} = weighted negated
+#'   Hessian, meat \eqn{B} = weight-squared OPG), or \code{"cluster"} for the
+#'   cluster-robust sandwich (requires \code{cluster_col} or a prepared
+#'   \code{input_data} with a \code{cluster} field). Use \code{"sandwich"} for
+#'   valid inference under choice-based / WESML weighting, where the
+#'   inverse-Hessian and ordinary BHHH are invalid; it reduces to the usual
+#'   robust variance under uniform weights. BHHH scales better to large
+#'   problems (many alternatives or simulation draws) but may underestimate
+#'   standard errors in finite samples or away from the optimum. Any of these
+#'   can also be recomputed post hoc via \code{vcov(fit, type = )}. Note that
+#'   clustering repairs the inference, not the estimand: the MXL likelihood
+#'   treats each choice situation as an independent draw from the mixing
+#'   distribution; for panel random coefficients use
+#'   \code{\link{run_hmnlogit}}.
+#' @param cluster_col Optional name of a column in \code{data} holding cluster
+#'   labels for cluster-robust standard errors (e.g. a person id when the same
+#'   decision maker contributes several choice situations). Must be constant
+#'   within each \code{id_col}. Supplying \code{cluster_col} without an explicit
+#'   \code{se_method} selects \code{se_method = "cluster"}.
 #' @param scale_vars Pre-estimation column scaling for design matrices. One of
 #'   \code{"none"} (default), \code{"sd"} (sample standard deviation),
 #'   \code{"mad"} (\code{stats::mad}, i.e. 1.4826 \eqn{\times}
@@ -120,10 +137,46 @@
 #'   log-normal parameterization does not admit a closed-form back-transform
 #'   under multiplicative scaling.
 #' @param weights Optional weight vector (convenience workflow). If \code{NULL},
-#'   equal weights are used.
+#'   equal weights are used. All weights must be finite and strictly positive.
+#' @param weights_col Optional name of a column in \code{data} holding a per-row
+#'   weight (constant within each choice situation, finite and strictly positive).
+#'   Mutually exclusive with
+#'   \code{weights}; the recommended way to pass WESML weights from
+#'   \code{\link{sample_by_choice}} / \code{\link{wesml_weights}}, since
+#'   alignment is by id rather than by position. Convenience workflow only. If
+#'   \code{data} carries choice-based-sampling provenance (a
+#'   \code{"choice_sampling"} attribute, as attached by
+#'   \code{\link{sample_by_choice}} / \code{\link{wesml_weights}}) and neither
+#'   \code{weights} nor \code{weights_col} is supplied, the recorded weight
+#'   column is auto-detected and applied (with a message); if that column is
+#'   absent the call errors rather than silently fitting an unweighted model
+#'   under a WESML label.
 #' @param outside_opt_label Label for the outside option (convenience workflow).
 #' @param include_outside_option Logical whether to include an outside option
 #'   (convenience workflow).
+#' @param draws Draw storage mode. One of \code{"store"} (default) or \code{"generate"}.
+#'   \code{"store"} pre-materializes the full \eqn{K_w \times S \times N} Halton cube
+#'   (existing behavior, exact reproducibility). \code{"generate"} computes each
+#'   individual's draws on-the-fly in C++ from a stored seed, eliminating the O(N)
+#'   cube; recommended for memory-constrained or large-N settings. With
+#'   \code{scramble = "permuted"}, each base-\eqn{b} digit position in each
+#'   dimension receives a seeded permutation shared across sequence indices.
+#'   This is not Owen's nested-uniform scramble and does not carry standard
+#'   randomized-QMC unbiasedness or error-estimation guarantees. Only supported
+#'   in the convenience workflow.
+#' @param seed Integer master seed for the on-the-fly generator. Used only when
+#'   \code{draws = "generate"}. If \code{NULL} (default), a seed is drawn from R's
+#'   RNG at call time (so \code{set.seed()} governs reproducibility). Ignored when
+#'   \code{draws = "store"}.
+#' @param scramble Scrambling mode for on-the-fly Halton draws. One of
+#'   \code{"permuted"} (default) for seeded position-wise digit permutations or
+#'   \code{"none"} for plain Halton (identity permutations). The historical value
+#'   \code{"owen"} is accepted with a deprecation warning as an alias for
+#'   \code{"permuted"}; the implementation is not Owen's nested-uniform scramble.
+#'   \code{"none"} reproduces the randtoolbox sequence exactly. Simulation-draw
+#'   sensitivity should be assessed by increasing \code{S} and, for
+#'   \code{"permuted"}, varying \code{seed}. Used only when
+#'   \code{draws = "generate"}.
 #' @param keep_data Logical. If \code{TRUE} (default), stores prepared data in
 #'   the returned object for post-estimation functions.
 #' @param nloptr_opts Deprecated. Use \code{optimizer} and \code{control}
@@ -169,18 +222,45 @@ run_mxlogit <- function(
     upper = NULL,
     optimizer = NULL,
     control = list(),
-    se_method = c("hessian", "bhhh"),
+    se_method = c("hessian", "bhhh", "sandwich", "cluster"),
     scale_vars = c("none", "sd", "mad", "iqr"),
     weights = NULL,
     outside_opt_label = NULL,
     include_outside_option = FALSE,
+    draws       = c("store", "generate"),
+    seed        = NULL,
+    scramble    = c("permuted", "none", "owen"),
     keep_data = TRUE,
-    nloptr_opts = NULL
+    nloptr_opts = NULL,
+    weights_col = NULL,
+    cluster_col = NULL
 ) {
   cl <- match.call()
 
+  se_method_default <- missing(se_method)
   se_method <- match.arg(se_method)
+  if (!is.null(cluster_col) && se_method_default) se_method <- "cluster"
   scale_vars <- match.arg(scale_vars)
+  draws   <- match.arg(draws)
+  scramble <- match.arg(scramble)
+  if (identical(scramble, "owen")) {
+    warning("scramble = \"owen\" is a deprecated alias for ",
+            "scramble = \"permuted\". The implemented position-wise digit ",
+            "permutation is not Owen's nested-uniform scramble.",
+            call. = FALSE)
+    scramble <- "permuted"
+  }
+
+  # Validate seed parameter
+  if (!is.null(seed)) {
+    if (!is.numeric(seed) || length(seed) != 1L || !is.finite(seed) || seed < 0) {
+      stop("'seed' must be NULL or a single non-negative integer.")
+    }
+    seed <- as.integer(seed)
+    if (draws != "generate") {
+      message("'seed' is ignored when draws = 'store'.")
+    }
+  }
 
   # Backward compatibility: nloptr_opts -> optimizer + control
   if (!is.null(nloptr_opts)) {
@@ -192,12 +272,23 @@ run_mxlogit <- function(
   # --- Resolve input pathway --------------------------------------------------
   has_data <- !is.null(data)
   has_input <- !is.null(input_data)
+  cs_meta <- if (has_data) attr(data, "choice_sampling") else attr(input_data, "choice_sampling")
 
   if (has_data && has_input) {
     stop("Supply either 'data' (convenience) or 'input_data' (advanced), not both.")
   }
   if (!has_data && !has_input) {
     stop("Supply either 'data' (convenience) or 'input_data' (advanced).")
+  }
+  if (has_input && !is.null(weights_col)) {
+    stop("`weights_col` is only supported in the convenience (data) workflow. ",
+         "Bake weights into `input_data` via prepare_mxl_data(weights_col = ) ",
+         "or supply `weights` to prepare_mxl_data().")
+  }
+  if (has_input && !is.null(cluster_col)) {
+    stop("`cluster_col` is only supported in the convenience (data) workflow. ",
+         "Bake cluster labels into `input_data` via ",
+         "prepare_mxl_data(cluster_col = ).")
   }
 
   if (has_data) {
@@ -207,6 +298,22 @@ run_mxlogit <- function(
       stop("Convenience workflow requires: id_col, alt_col, choice_col, ",
            "covariate_cols, and random_var_cols.")
     }
+    # WESML provenance present but no weights supplied: auto-adopt the recorded
+    # weight column, or error -- never silently fit unweighted under a WESML label.
+    if (has_data && !is.null(cs_meta) && is.null(weights) && is.null(weights_col)) {
+      wn <- cs_meta$weight_name
+      if (!is.null(wn) && wn %in% names(data)) {
+        weights_col <- wn
+        message("Detected WESML choice-based-sampling provenance; applying attached ",
+                "weights from column '", wn, "'.")
+      } else {
+        stop("Data carries WESML choice-based-sampling provenance but no weights were ",
+             "supplied, and the recorded weight column (",
+             if (is.null(wn)) "unknown" else paste0("'", wn, "'"),
+             ") is not present in `data`. Pass `weights_col=` or `weights=` explicitly.",
+             call. = FALSE)
+      }
+    }
     input_data <- prepare_mxl_data(
       data = data,
       id_col = id_col,
@@ -215,17 +322,38 @@ run_mxlogit <- function(
       covariate_cols = covariate_cols,
       random_var_cols = random_var_cols,
       weights = weights,
+      weights_col = weights_col,
       outside_opt_label = outside_opt_label,
       include_outside_option = include_outside_option,
-      rc_correlation = rc_correlation
+      rc_correlation = rc_correlation,
+      cluster_col = cluster_col
     )
     K_w <- ncol(input_data$W)
-    eta_draws <- get_halton_normals(S, input_data$N, K_w)
+    if (draws == "store") {
+      eta_draws <- get_halton_normals(S, input_data$N, K_w)
+    } else {
+      # generate mode: no cube ever materialized; empty placeholder
+      eta_draws <- array(0, dim = c(K_w, 0L, 0L))
+      # Draw seed from R RNG when not supplied (like run_mnprobit)
+      if (is.null(seed)) {
+        seed <- sample.int(.Machine$integer.max, 1L)
+      }
+    }
   } else {
     # Advanced workflow
+    if (draws == "generate") {
+      stop("draws=generate is only supported in the convenience workflow. ",
+           "In the advanced workflow, supply 'eta_draws' directly.")
+    }
     if (is.null(eta_draws)) {
       stop("'eta_draws' is required when using 'input_data' (advanced workflow).")
     }
+  }
+
+  if (se_method == "cluster" && is.null(input_data$cluster)) {
+    stop("se_method = \"cluster\" needs cluster labels: pass `cluster_col=` ",
+         "(convenience workflow) or prepare `input_data` with ",
+         "prepare_mxl_data(cluster_col = ).", call. = FALSE)
   }
 
   # Parameter dimensions
@@ -282,38 +410,18 @@ run_mxlogit <- function(
   sX <- rep(1, K_x); names(sX) <- colnames(input_data$X)
   sW <- rep(1, K_w); names(sW) <- colnames(input_data$W)
   if (scale_vars != "none") {
-    scale_fn <- switch(
-      scale_vars,
-      sd  = stats::sd,
-      mad = stats::mad,                          # 1.4826 * median|x - med(x)|
-      iqr = function(x) stats::IQR(x) / 1.349    # SD-equivalent under normality
-    )
-    eps <- 1e-8
     if (K_x > 0) {
-      sX_raw <- apply(input_data$X, 2, scale_fn)
-      bad <- sX_raw < eps
-      if (any(bad)) {
-        stop("scale_vars='", scale_vars,
-             "': fixed-coefficient column(s) with scale < ", eps, ": ",
-             paste0(names(sX_raw)[bad], "=", signif(sX_raw[bad], 3),
-                    collapse = ", "))
-      }
+      sX_raw <- .column_scales(input_data$X, scale_vars)
+      .assert_scales_ok(sX_raw, scale_vars, "fixed-coefficient")
       sX <- sX_raw
       input_data$X <- sweep(input_data$X, 2, sX, "/")
     }
     if (K_w > 0) {
-      sW_raw <- apply(input_data$W, 2, scale_fn)
+      sW_raw <- .column_scales(input_data$W, scale_vars)
       normal_cols <- which(rc_dist == 0L)
       if (length(normal_cols) > 0L) {
-        bad <- sW_raw[normal_cols] < eps
-        if (any(bad)) {
-          off <- normal_cols[bad]
-          stop("scale_vars='", scale_vars,
-               "': normal random-coefficient column(s) with scale < ", eps,
-               ": ",
-               paste0(colnames(input_data$W)[off], "=",
-                      signif(sW_raw[off], 3), collapse = ", "))
-        }
+        .assert_scales_ok(sW_raw, scale_vars, "normal random-coefficient",
+                          idx = normal_cols)
       }
       # Preserve names from sW_raw; carve out log-normal columns (pass-through).
       sW <- sW_raw
@@ -391,6 +499,12 @@ run_mxlogit <- function(
     upper <- (upper - bt_shift) / bt_mult
   }
 
+  # Resolve generate-mode parameters for C++ kernels.
+  # In store mode (draws="store"): gen_seed_cpp = -1L triggers cube path (unchanged behavior).
+  gen_seed_cpp     <- if (draws == "generate") seed else -1L
+  gen_scramble_cpp <- if (draws == "generate") (if (scramble == "permuted") 1L else 0L) else 1L
+  gen_S_cpp        <- if (draws == "generate") S else 0L
+
   # Build eval_f closure
   eval_f <- function(theta) {
     mxl_loglik_gradient_parallel(
@@ -406,7 +520,10 @@ run_mxlogit <- function(
       rc_mean = rc_mean,
       eta_draws = eta_draws,
       use_asc = use_asc,
-      include_outside_option = input_data$include_outside_option
+      include_outside_option = input_data$include_outside_option,
+      gen_seed = gen_seed_cpp,
+      gen_scramble = gen_scramble_cpp,
+      gen_S = gen_S_cpp
     )
   }
 
@@ -428,7 +545,85 @@ run_mxlogit <- function(
   theta_hat <- opt$par
   names(theta_hat) <- param_names
 
-  # Compute vcov eagerly using the selected SE method
+  # Choice-based-sampling provenance and a guardrail for weighted inference.
+  weights_nonuniform <- length(unique(input_data$weights)) > 1
+  if (weights_nonuniform && se_method == "bhhh") {
+    warning("Non-uniform weights detected with se_method = 'bhhh': BHHH/OPG ",
+            "standard errors use the w^1 meat (sum w_i s_i s_i')^{-1}, which is ",
+            "NOT a valid choice-based-sampling (WESML) correction; the correct ",
+            "sandwich meat is w^2. Use se_method = 'sandwich' for valid WESML ",
+            "inference.",
+            call. = FALSE)
+  } else if (weights_nonuniform && !se_method %in% c("sandwich", "cluster")) {
+    warning("Non-uniform weights detected. If these are sampling/WESML ",
+            "weights, use se_method = 'sandwich' for valid inference.",
+            call. = FALSE)
+  }
+  choice_sampling <- if (!is.null(cs_meta)) {
+    utils::modifyList(as.list(cs_meta),
+                      list(se_method = se_method, weights_applied = weights_nonuniform))
+  } else if (weights_nonuniform) {
+    list(scheme = "user", se_method = se_method, weights_applied = TRUE)
+  } else {
+    NULL
+  }
+  if (!is.null(cs_meta) && !weights_nonuniform) {
+    if (has_input) {
+      stop("`input_data` is flagged as a WESML choice-based sample (it carries ",
+           "`choice_sampling` provenance), but the resolved weights are uniform. ",
+           "Fitting would produce an invalid unweighted estimator mislabeled as ",
+           "WESML. To proceed, either bake the non-uniform WESML weights into ",
+           "`input_data` via prepare_mxl_data(weights = ) / prepare_mxl_data(weights_col = ), ",
+           "or, if you deliberately want an unweighted fit, strip the provenance with ",
+           "`attr(input_data, \"choice_sampling\") <- NULL`.",
+           call. = FALSE)
+    }
+    warning("WESML provenance is present but the applied weights are uniform; the fit ",
+            "is effectively unweighted and is NOT a WESML-corrected estimator.",
+            call. = FALSE)
+  }
+
+  # Compute vcov eagerly using the selected SE method.
+  # For "sandwich" (robust / WESML) standard errors, form V = A^{-1} B A^{-1}
+  # with bread A = weighted negated Hessian and meat B = weight-squared OPG
+  # (pass weights^2 to the BHHH routine, whose per-individual score is
+  # weight-free). For "cluster", the meat is the outer product of
+  # within-cluster sums of weighted scores. Computed in scaled space; the
+  # back-transform below applies.
+  if (se_method %in% c("sandwich", "cluster")) {
+    A_bread <- mxl_hessian_parallel(
+      theta = theta_hat, X = input_data$X, W = input_data$W,
+      alt_idx = input_data$alt_idx, choice_idx = input_data$choice_idx,
+      M = input_data$M, weights = input_data$weights, eta_draws = eta_draws,
+      rc_dist = rc_dist, rc_correlation = rc_correlation, rc_mean = rc_mean,
+      use_asc = use_asc,
+      include_outside_option = input_data$include_outside_option,
+      gen_seed = gen_seed_cpp, gen_scramble = gen_scramble_cpp, gen_S = gen_S_cpp
+    )
+    B_meat <- if (se_method == "sandwich") {
+      mxl_bhhh_parallel(
+        theta = theta_hat, X = input_data$X, W = input_data$W,
+        alt_idx = input_data$alt_idx, choice_idx = input_data$choice_idx,
+        M = input_data$M, weights = input_data$weights^2, eta_draws = eta_draws,
+        rc_dist = rc_dist, rc_correlation = rc_correlation, rc_mean = rc_mean,
+        use_asc = use_asc,
+        include_outside_option = input_data$include_outside_option,
+        gen_seed = gen_seed_cpp, gen_scramble = gen_scramble_cpp, gen_S = gen_S_cpp
+      )
+    } else {
+      S_scores <- mxl_scores_parallel(
+        theta = theta_hat, X = input_data$X, W = input_data$W,
+        alt_idx = input_data$alt_idx, choice_idx = input_data$choice_idx,
+        M = input_data$M, eta_draws = eta_draws,
+        rc_dist = rc_dist, rc_correlation = rc_correlation, rc_mean = rc_mean,
+        use_asc = use_asc,
+        include_outside_option = input_data$include_outside_option,
+        gen_seed = gen_seed_cpp, gen_scramble = gen_scramble_cpp, gen_S = gen_S_cpp
+      )
+      .score_meat(S_scores, input_data$weights, "cluster", input_data$cluster)
+    }
+    vcov_result <- .sandwich_combine(A_bread, B_meat)
+  } else {
   hess <- switch(
     se_method,
     hessian = mxl_hessian_parallel(
@@ -444,7 +639,8 @@ run_mxlogit <- function(
       rc_correlation = rc_correlation,
       rc_mean = rc_mean,
       use_asc = use_asc,
-      include_outside_option = input_data$include_outside_option
+      include_outside_option = input_data$include_outside_option,
+      gen_seed = gen_seed_cpp, gen_scramble = gen_scramble_cpp, gen_S = gen_S_cpp
     ),
     bhhh = mxl_bhhh_parallel(
       theta = theta_hat,
@@ -459,10 +655,12 @@ run_mxlogit <- function(
       rc_correlation = rc_correlation,
       rc_mean = rc_mean,
       use_asc = use_asc,
-      include_outside_option = input_data$include_outside_option
+      include_outside_option = input_data$include_outside_option,
+      gen_seed = gen_seed_cpp, gen_scramble = gen_scramble_cpp, gen_S = gen_S_cpp
     )
   )
   vcov_result <- invert_hessian(hess)
+  }
   if (!is.null(vcov_result$vcov)) {
     rownames(vcov_result$vcov) <- param_names
     colnames(vcov_result$vcov) <- param_names
@@ -474,20 +672,9 @@ run_mxlogit <- function(
   #   theta_natural = bt_mult * theta_scaled + bt_shift
   #   vcov_natural  = (bt_mult bt_mult') o vcov_scaled  (shifts don't enter)
   if (scale_vars != "none") {
-    theta_hat <- theta_hat * bt_mult + bt_shift
-    names(theta_hat) <- param_names
-    if (!is.null(vcov_result$vcov)) {
-      vcov_result$vcov <- vcov_result$vcov * tcrossprod(bt_mult)
-      rownames(vcov_result$vcov) <- param_names
-      colnames(vcov_result$vcov) <- param_names
-      diag_v <- diag(vcov_result$vcov)
-      se <- rep(NA_real_, n_params)
-      ok <- !is.na(diag_v) & diag_v >= 0
-      se[ok] <- sqrt(diag_v[ok])
-      names(se) <- param_names
-      vcov_result$se <- se
-    }
-    # Restore natural-scale design matrices for storage and post-estimation use
+    bt <- .backtransform_estimates(theta_hat, vcov_result, bt_mult, bt_shift, param_names)
+    theta_hat <- bt$theta
+    vcov_result <- bt$vcov_result
     input_data$X <- natural_X
     input_data$W <- natural_W
   }
@@ -503,9 +690,12 @@ run_mxlogit <- function(
 
   # Draws info (metadata only, not the full array)
   draws_info <- list(
-    S = dim(eta_draws)[2],
-    N = dim(eta_draws)[3],
-    K_w = K_w
+    S       = S,
+    N       = input_data$N,
+    K_w     = K_w,
+    mode    = draws,
+    seed    = if (draws == "generate") seed else NULL,
+    scramble = if (draws == "generate") scramble else NULL
   )
 
   # Build S3 object
@@ -537,7 +727,9 @@ run_mxlogit <- function(
         alt_idx = input_data$alt_idx,
         choice_idx = input_data$choice_idx,
         M = input_data$M,
-        weights = input_data$weights
+        weights = input_data$weights,
+        cluster = input_data$cluster,
+        situation_ids = input_data$situation_ids
       )
     },
     draws_info = draws_info,
@@ -548,12 +740,13 @@ run_mxlogit <- function(
     se_method = se_method,
     scale_vars = scale_vars,
     sX = sX,
-    sW = sW
+    sW = sW,
+    choice_sampling = choice_sampling
   )
 }
 
 
-#' Prepare inputs for `mxl_loglik_gradient_parallel()`
+#' Prepare inputs for mixed logit estimation
 #'
 #' Prepares and validates inputs for mixed logit estimation routine.
 #'
@@ -563,10 +756,15 @@ run_mxlogit <- function(
 #' @param choice_col Name of the column indicating chosen alternative (1 = chosen, 0 = not chosen)
 #' @param covariate_cols Vector of names of columns to be used as covariates
 #' @param random_var_cols Vector of names of columns to be used as random variables
-#' @param weights Optional vector of weights for each choice situation. If NULL, equal weights are used.
+#' @param weights Optional vector of weights for each choice situation. If NULL, equal weights are used. All weights must be finite and strictly positive.
+#' @param weights_col Optional name of a column in \code{data} holding a per-row weight (constant within each choice situation, finite and strictly positive). Mutually exclusive with \code{weights}.
 #' @param outside_opt_label Label for the outside option (if any). If NULL, no outside option is assumed.
 #' @param include_outside_option Logical indicating whether to include an outside option in the model.
 #' @param rc_correlation Logical indicating whether random coefficients are correlated. Default is FALSE.
+#' @param cluster_col Optional name of a column in \code{data} holding cluster
+#'   labels for cluster-robust standard errors. Must be constant within each
+#'   \code{id_col}; collapsed to one label per choice situation and returned as
+#'   \code{cluster}.
 #' @returns A `choicer_data_mxl` object (list) containing:
 #'   \itemize{
 #'     \item `X`: Fixed-coefficient design matrix (sum(M) x K_x).
@@ -576,6 +774,8 @@ run_mxlogit <- function(
 #'     \item `M`: Integer vector with number of alternatives per choice situation.
 #'     \item `N`: Number of choice situations.
 #'     \item `weights`: Vector of weights.
+#'     \item `cluster`: Vector of cluster labels (or `NULL`).
+#'     \item `situation_ids`: Choice-situation ids in prepared (sorted) order.
 #'     \item `include_outside_option`: Logical flag.
 #'     \item `rc_correlation`: Logical flag.
 #'     \item `alt_mapping`: data.table mapping alternatives to summary statistics.
@@ -604,14 +804,24 @@ prepare_mxl_data <- function(
     weights = NULL,
     outside_opt_label = NULL,
     include_outside_option = FALSE,
-    rc_correlation = FALSE
+    rc_correlation = FALSE,
+    weights_col = NULL,
+    cluster_col = NULL
 ) {
 
   ## Preliminary housekeeping --------------------------------------------------
+  # Capture any choice-based-sampling provenance before column drops / coercion,
+  # so it can be carried onto the returned object for the advanced pathway.
+  cs_provenance <- attr(data, "choice_sampling")
   dt <- data.table::as.data.table(data)[]
 
   # Check if all relevant variables are available
   needed <- c(id_col, alt_col, choice_col, covariate_cols, random_var_cols)
+  if (!is.null(weights) && !is.null(weights_col)) {
+    stop("Supply only one of `weights` or `weights_col`.")
+  }
+  if (!is.null(weights_col)) needed <- c(needed, weights_col)
+  if (!is.null(cluster_col)) needed <- c(needed, cluster_col)
   if (!all(needed %in% names(dt)))
     stop("Missing columns: ",
          paste(setdiff(needed, names(dt)), collapse = ", "))
@@ -706,6 +916,30 @@ prepare_mxl_data <- function(
   ids <- dt[, get(id_col)][!duplicated(dt[[id_col]])]  # vector of ids in *current* order
   N   <- length(ids)
 
+  ## Collapse a row-level weight column to one weight per choice situation.
+  ## Done AFTER ordering/filtering so alignment is by id, never by position.
+  if (!is.null(weights_col)) {
+    if (!is.numeric(dt[[weights_col]])) {
+      stop("`", weights_col, "` must be numeric.")
+    }
+    nuniq <- dt[, data.table::uniqueN(get(weights_col)), by = id_col][["V1"]]
+    if (any(nuniq != 1L)) {
+      stop("`", weights_col, "` must be constant within each '", id_col,
+           "' (one weight per choice situation).")
+    }
+    wmap <- dt[, get(weights_col)[1L], by = id_col]
+    weights <- wmap[["V1"]][match(ids, wmap[[id_col]])]
+    if (any(!is.finite(weights))) {
+      stop("`", weights_col, "` produced non-finite weights.")
+    }
+  }
+
+  ## Collapse a row-level cluster column to one label per choice situation
+  ## (same alignment discipline as weights_col).
+  cluster <- if (!is.null(cluster_col)) {
+    .collapse_situation_col(dt, cluster_col, id_col, ids)
+  }
+
   ## choice_idx[i] - 1-based index *within* the choice set data
   ## 0 == outside option (only if chosen = 0 for all inside options & include_outside_option == TRUE)
   if (include_outside_option) {
@@ -723,6 +957,19 @@ prepare_mxl_data <- function(
 
   # Weights default = 1
   if (is.null(weights)) weights <- rep(1, N)
+
+  ## Weights must be finite and strictly positive. Zero/negative weights would
+  ## silently invalidate weighted and WESML sandwich inference (w in the bread,
+  ## w^2 in the meat). Validated here so every resolution path (weights=,
+  ## weights_col=, and the uniform default) is covered.
+  if (any(!is.finite(weights))) {
+    stop("Weights must be finite, but non-finite values (NA/NaN/Inf) were found.",
+         call. = FALSE)
+  }
+  if (any(weights <= 0)) {
+    stop("Weights must be strictly positive, but values <= 0 were found.",
+         call. = FALSE)
+  }
 
   ## Alternative summary -------------------------------------------------------
 
@@ -759,7 +1006,7 @@ prepare_mxl_data <- function(
   )
 
   ## Return output -------------------------------------------------------------
-  structure(
+  out <- structure(
     list(
       X           = X,
       W           = W,
@@ -768,6 +1015,8 @@ prepare_mxl_data <- function(
       M           = M,
       N           = N,
       weights     = weights,
+      cluster     = cluster,
+      situation_ids = ids,
       include_outside_option = include_outside_option,
       rc_correlation = rc_correlation,
       alt_mapping = alt_mapping[],
@@ -783,6 +1032,10 @@ prepare_mxl_data <- function(
     ),
     class = "choicer_data_mxl"
   )
+  if (!is.null(cs_provenance)) {
+    attr(out, "choice_sampling") <- cs_provenance
+  }
+  out
 }
 
 #' Halton draws for mixed logit
@@ -825,4 +1078,34 @@ get_halton_normals <- function(S, N, K_w) {
   }
 
   return(eta_draws)
+}
+
+
+#' Resolve draw parameters for post-estimation regeneration sites
+#'
+#' When the fitted object used generate mode, returns an empty placeholder cube
+#' plus the three gen_* integers. When in store mode, materialises the Halton
+#' cube from the stored metadata.
+#'
+#' @param draws_info List from a fitted choicer_mxl object.
+#' @noRd
+.mxl_gen_params <- function(draws_info) {
+  mode <- draws_info$mode %||% "store"
+  if (mode == "generate") {
+    list(
+      eta_draws    = array(0, dim = c(draws_info$K_w, 0L, 0L)),
+      gen_seed     = as.integer(draws_info$seed),
+      # "owen" is the legacy serialized label for the same position-wise
+      # permutation. Read it silently so old fitted objects keep working.
+      gen_scramble = if (draws_info$scramble %in% c("permuted", "owen")) 1L else 0L,
+      gen_S        = as.integer(draws_info$S)
+    )
+  } else {
+    list(
+      eta_draws    = get_halton_normals(draws_info$S, draws_info$N, draws_info$K_w),
+      gen_seed     = -1L,
+      gen_scramble = 1L,
+      gen_S        = 0L
+    )
+  }
 }

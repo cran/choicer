@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+
+<html>
+
+<head>
+
+<meta charset="utf-8" />
+<meta name="generator" content="pandoc" />
+<meta http-equiv="X-UA-Compatible" content="IE=EDGE" />
+
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+
+
+
+<title>Mixed logit and preference heterogeneity</title>
+
+<script>// Pandoc 2.9 adds attributes on both header and div. We remove the former (to
+// be compatible with the behavior of Pandoc < 2.8).
+document.addEventListener('DOMContentLoaded', function(e) {
+  var hs = document.querySelectorAll("div.section[class*='level'] > :first-child");
+  var i, h, a;
+  for (i = 0; i < hs.length; i++) {
+    h = hs[i];
+    if (!/^h[1-6]$/i.test(h.tagName)) continue;  // it should be a header h1-h6
+    a = h.attributes;
+    while (a.length > 0) h.removeAttribute(a[0].name);
+  }
+});
+</script>
+
+<style type="text/css">
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+span.underline{text-decoration: underline;}
+div.column{display: inline-block; vertical-align: top; width: 50%;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+</style>
+
+
+
+<style type="text/css">
+code {
+white-space: pre;
+}
+.sourceCode {
+overflow: visible;
+}
+</style>
+<style type="text/css" data-origin="pandoc">
+html { -webkit-text-size-adjust: 100%; }
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+{ counter-reset: source-line 0; }
+pre.numberSource code > span
+{ position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+{ content: counter(source-line);
+position: relative; left: -1em; text-align: right; vertical-align: baseline;
+border: none; display: inline-block;
+-webkit-touch-callout: none; -webkit-user-select: none;
+-khtml-user-select: none; -moz-user-select: none;
+-ms-user-select: none; user-select: none;
+padding: 0 4px; width: 4em;
+color: #aaaaaa;
+}
+pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa; padding-left: 4px; }
+div.sourceCode
+{ }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+code span.al { color: #ff0000; font-weight: bold; } 
+code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.at { color: #7d9029; } 
+code span.bn { color: #40a070; } 
+code span.bu { color: #008000; } 
+code span.cf { color: #007020; font-weight: bold; } 
+code span.ch { color: #4070a0; } 
+code span.cn { color: #880000; } 
+code span.co { color: #60a0b0; font-style: italic; } 
+code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.do { color: #ba2121; font-style: italic; } 
+code span.dt { color: #902000; } 
+code span.dv { color: #40a070; } 
+code span.er { color: #ff0000; font-weight: bold; } 
+code span.ex { } 
+code span.fl { color: #40a070; } 
+code span.fu { color: #06287e; } 
+code span.im { color: #008000; font-weight: bold; } 
+code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.kw { color: #007020; font-weight: bold; } 
+code span.op { color: #666666; } 
+code span.ot { color: #007020; } 
+code span.pp { color: #bc7a00; } 
+code span.sc { color: #4070a0; } 
+code span.ss { color: #bb6688; } 
+code span.st { color: #4070a0; } 
+code span.va { color: #19177c; } 
+code span.vs { color: #4070a0; } 
+code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } 
+</style>
+<script>
+// apply pandoc div.sourceCode style to pre.sourceCode instead
+(function() {
+  var sheets = document.styleSheets;
+  for (var i = 0; i < sheets.length; i++) {
+    if (sheets[i].ownerNode.dataset["origin"] !== "pandoc") continue;
+    try { var rules = sheets[i].cssRules; } catch (e) { continue; }
+    var j = 0;
+    while (j < rules.length) {
+      var rule = rules[j];
+      // check if there is a div.sourceCode rule
+      if (rule.type !== rule.STYLE_RULE || rule.selectorText !== "div.sourceCode") {
+        j++;
+        continue;
+      }
+      var style = rule.style.cssText;
+      // check if color or background-color is set
+      if (rule.style.color === '' && rule.style.backgroundColor === '') {
+        j++;
+        continue;
+      }
+      // replace div.sourceCode by a pre.sourceCode rule
+      sheets[i].deleteRule(j);
+      sheets[i].insertRule('pre.sourceCode{' + style + '}', j);
+    }
+  }
+})();
+</script>
+
+
+
+
+<style type="text/css">body {
+background-color: #fff;
+margin: 1em auto;
+max-width: 700px;
+overflow: visible;
+padding-left: 2em;
+padding-right: 2em;
+font-family: "Open Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+font-size: 14px;
+line-height: 1.35;
+}
+#TOC {
+clear: both;
+margin: 0 0 10px 10px;
+padding: 4px;
+width: 400px;
+border: 1px solid #CCCCCC;
+border-radius: 5px;
+background-color: #f6f6f6;
+font-size: 13px;
+line-height: 1.3;
+}
+#TOC .toctitle {
+font-weight: bold;
+font-size: 15px;
+margin-left: 5px;
+}
+#TOC ul {
+padding-left: 40px;
+margin-left: -1.5em;
+margin-top: 5px;
+margin-bottom: 5px;
+}
+#TOC ul ul {
+margin-left: -2em;
+}
+#TOC li {
+line-height: 16px;
+}
+table {
+margin: 1em auto;
+border-width: 1px;
+border-color: #DDDDDD;
+border-style: outset;
+border-collapse: collapse;
+}
+table th {
+border-width: 2px;
+padding: 5px;
+border-style: inset;
+}
+table td {
+border-width: 1px;
+border-style: inset;
+line-height: 18px;
+padding: 5px 5px;
+}
+table, table th, table td {
+border-left-style: none;
+border-right-style: none;
+}
+table thead, table tr.even {
+background-color: #f7f7f7;
+}
+p {
+margin: 0.5em 0;
+}
+blockquote {
+background-color: #f6f6f6;
+padding: 0.25em 0.75em;
+}
+hr {
+border-style: solid;
+border: none;
+border-top: 1px solid #777;
+margin: 28px 0;
+}
+dl {
+margin-left: 0;
+}
+dl dd {
+margin-bottom: 13px;
+margin-left: 13px;
+}
+dl dt {
+font-weight: bold;
+}
+ul {
+margin-top: 0;
+}
+ul li {
+list-style: circle outside;
+}
+ul ul {
+margin-bottom: 0;
+}
+pre, code {
+background-color: #f7f7f7;
+border-radius: 3px;
+color: #333;
+white-space: pre-wrap; 
+}
+pre {
+border-radius: 3px;
+margin: 5px 0px 10px 0px;
+padding: 10px;
+}
+pre:not([class]) {
+background-color: #f7f7f7;
+}
+code {
+font-family: Consolas, Monaco, 'Courier New', monospace;
+font-size: 85%;
+}
+p > code, li > code {
+padding: 2px 0px;
+}
+div.figure {
+text-align: center;
+}
+img {
+background-color: #FFFFFF;
+padding: 2px;
+border: 1px solid #DDDDDD;
+border-radius: 3px;
+border: 1px solid #CCCCCC;
+margin: 0 5px;
+}
+h1 {
+margin-top: 0;
+font-size: 35px;
+line-height: 40px;
+}
+h2 {
+border-bottom: 4px solid #f7f7f7;
+padding-top: 10px;
+padding-bottom: 2px;
+font-size: 145%;
+}
+h3 {
+border-bottom: 2px solid #f7f7f7;
+padding-top: 10px;
+font-size: 120%;
+}
+h4 {
+border-bottom: 1px solid #f7f7f7;
+margin-left: 8px;
+font-size: 105%;
+}
+h5, h6 {
+border-bottom: 1px solid #ccc;
+font-size: 105%;
+}
+a {
+color: #0033dd;
+text-decoration: none;
+}
+a:hover {
+color: #6666ff; }
+a:visited {
+color: #800080; }
+a:visited:hover {
+color: #BB00BB; }
+a[href^="http:"] {
+text-decoration: underline; }
+a[href^="https:"] {
+text-decoration: underline; }
+
+code > span.kw { color: #555; font-weight: bold; } 
+code > span.dt { color: #902000; } 
+code > span.dv { color: #40a070; } 
+code > span.bn { color: #d14; } 
+code > span.fl { color: #d14; } 
+code > span.ch { color: #d14; } 
+code > span.st { color: #d14; } 
+code > span.co { color: #888888; font-style: italic; } 
+code > span.ot { color: #007020; } 
+code > span.al { color: #ff0000; font-weight: bold; } 
+code > span.fu { color: #900; font-weight: bold; } 
+code > span.er { color: #a61717; background-color: #e3d2d2; } 
+</style>
+
+
+
+
+</head>
+
+<body>
+
+
+
+
+<h1 class="title toc-ignore">Mixed logit and preference
+heterogeneity</h1>
+
+
+
+<p>The mixed (random-coefficients) logit lets tastes vary across
+decision units. Instead of a single coefficient on each random
+attribute, choicer estimates a <em>distribution</em> of coefficients.
+Substitution then reflects both observed covariates and the estimated
+distribution of tastes. Estimation is by simulated maximum likelihood
+using Halton draws, with the likelihood, gradient and Hessian evaluated
+in parallel C++. <code>run_mxlogit()</code> currently estimates a
+<strong>cross-sectional</strong> simulated likelihood: each choice
+situation’s probability is integrated over the taste distribution
+separately. It does not hold a simulation draw fixed across a person’s
+tasks and then integrate the product of conditional probabilities, as a
+frequentist panel mixed-logit likelihood would.</p>
+<p>A useful way to see the mechanism is to write the mixed-logit
+probability as a logit kernel averaged over the taste distribution,
+<span class="math inline">\(P_{ij} = \int L_{ij}(\beta)\, f(\beta)\,
+d\beta\)</span>, where <span class="math inline">\(L_{ij}(\beta) =
+\exp(X_{ij}\beta) / \sum_k \exp(X_{ik}\beta)\)</span>. <em>Conditional
+on a draw</em> <span class="math inline">\(\beta\)</span>, the kernel is
+an ordinary logit. The empirical content of the mixed logit is in the
+averaging: people with different <span class="math inline">\(\beta\)</span>’s place different values on the
+same attributes, so demand leaving an alternative need not go to the
+same destinations for all consumers. For counterfactual work, the
+distinction between observed heterogeneity and the estimated mixing
+distribution is central: flexibility that is not disciplined by the
+available variation is supplied by the maintained distribution <span class="math inline">\(f(\beta)\)</span>.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" tabindex="-1"></a><span class="fu">library</span>(choicer)</span>
+<span id="cb1-2"><a href="#cb1-2" tabindex="-1"></a><span class="fu">set_num_threads</span>(<span class="dv">2</span>)</span></code></pre></div>
+<div id="simulate-correlated-random-coefficients" class="section level2">
+<h2>Simulate correlated random coefficients</h2>
+<p><code>simulate_mxl_data()</code> draws choices in which the
+coefficients on <code>w1</code> and <code>w2</code> are themselves
+random and <em>correlated</em> across the population.</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb2-1"><a href="#cb2-1" tabindex="-1"></a>sim <span class="ot">&lt;-</span> <span class="fu">simulate_mxl_data</span>(<span class="at">N =</span> <span class="dv">2000</span>, <span class="at">J =</span> <span class="dv">4</span>, <span class="at">seed =</span> <span class="dv">1</span>)</span>
+<span id="cb2-2"><a href="#cb2-2" tabindex="-1"></a>sim</span>
+<span id="cb2-3"><a href="#cb2-3" tabindex="-1"></a><span class="co">#&gt; &lt;choicer_sim: mxl&gt;</span></span>
+<span id="cb2-4"><a href="#cb2-4" tabindex="-1"></a><span class="co">#&gt;   settings:</span></span>
+<span id="cb2-5"><a href="#cb2-5" tabindex="-1"></a><span class="co">#&gt;     N = 2000</span></span>
+<span id="cb2-6"><a href="#cb2-6" tabindex="-1"></a><span class="co">#&gt;     J = 4</span></span>
+<span id="cb2-7"><a href="#cb2-7" tabindex="-1"></a><span class="co">#&gt;     K_x = 2</span></span>
+<span id="cb2-8"><a href="#cb2-8" tabindex="-1"></a><span class="co">#&gt;     K_w = 2</span></span>
+<span id="cb2-9"><a href="#cb2-9" tabindex="-1"></a><span class="co">#&gt;     outside_option = TRUE</span></span>
+<span id="cb2-10"><a href="#cb2-10" tabindex="-1"></a><span class="co">#&gt;     vary_choice_set = TRUE</span></span>
+<span id="cb2-11"><a href="#cb2-11" tabindex="-1"></a><span class="co">#&gt;   rows in $data: 7982</span></span>
+<span id="cb2-12"><a href="#cb2-12" tabindex="-1"></a><span class="co">#&gt;   true_params: beta, delta, Sigma, L_params, mu, rc_dist, rc_correlation</span></span></code></pre></div>
+</div>
+<div id="fit" class="section level2">
+<h2>Fit</h2>
+<p>A robust recipe for mixed logit: warm-start from a plain MNL, scale
+the variables so the Hessian is well conditioned, and use enough Halton
+draws. Here we estimate a full (correlated) covariance of the random
+coefficients.</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb3-1"><a href="#cb3-1" tabindex="-1"></a>fit <span class="ot">&lt;-</span> <span class="fu">run_mxlogit</span>(</span>
+<span id="cb3-2"><a href="#cb3-2" tabindex="-1"></a>  <span class="at">data            =</span> sim<span class="sc">$</span>data,</span>
+<span id="cb3-3"><a href="#cb3-3" tabindex="-1"></a>  <span class="at">id_col          =</span> <span class="st">&quot;id&quot;</span>,</span>
+<span id="cb3-4"><a href="#cb3-4" tabindex="-1"></a>  <span class="at">alt_col         =</span> <span class="st">&quot;alt&quot;</span>,</span>
+<span id="cb3-5"><a href="#cb3-5" tabindex="-1"></a>  <span class="at">choice_col      =</span> <span class="st">&quot;choice&quot;</span>,</span>
+<span id="cb3-6"><a href="#cb3-6" tabindex="-1"></a>  <span class="at">covariate_cols  =</span> <span class="fu">c</span>(<span class="st">&quot;x1&quot;</span>, <span class="st">&quot;x2&quot;</span>),  <span class="co"># fixed coefficients</span></span>
+<span id="cb3-7"><a href="#cb3-7" tabindex="-1"></a>  <span class="at">random_var_cols =</span> <span class="fu">c</span>(<span class="st">&quot;w1&quot;</span>, <span class="st">&quot;w2&quot;</span>),  <span class="co"># random coefficients</span></span>
+<span id="cb3-8"><a href="#cb3-8" tabindex="-1"></a>  <span class="at">rc_correlation  =</span> <span class="cn">TRUE</span>,           <span class="co"># estimate their full covariance</span></span>
+<span id="cb3-9"><a href="#cb3-9" tabindex="-1"></a>  <span class="at">S               =</span> <span class="dv">100</span><span class="dt">L</span>,           <span class="co"># Halton draws per person</span></span>
+<span id="cb3-10"><a href="#cb3-10" tabindex="-1"></a>  <span class="at">draws           =</span> <span class="st">&quot;generate&quot;</span>,     <span class="co"># generate draws on the fly (low memory)</span></span>
+<span id="cb3-11"><a href="#cb3-11" tabindex="-1"></a>  <span class="at">seed            =</span> <span class="dv">7</span><span class="dt">L</span>,</span>
+<span id="cb3-12"><a href="#cb3-12" tabindex="-1"></a>  <span class="at">scale_vars      =</span> <span class="st">&quot;sd&quot;</span>,           <span class="co"># condition the Hessian across blocks</span></span>
+<span id="cb3-13"><a href="#cb3-13" tabindex="-1"></a>  <span class="at">se_method       =</span> <span class="st">&quot;bhhh&quot;</span></span>
+<span id="cb3-14"><a href="#cb3-14" tabindex="-1"></a>)</span>
+<span id="cb3-15"><a href="#cb3-15" tabindex="-1"></a><span class="co">#&gt; Optimization run time 0h:0m:0.56s</span></span>
+<span id="cb3-16"><a href="#cb3-16" tabindex="-1"></a><span class="fu">summary</span>(fit)</span>
+<span id="cb3-17"><a href="#cb3-17" tabindex="-1"></a><span class="co">#&gt; Mixed Logit (MXL) model</span></span>
+<span id="cb3-18"><a href="#cb3-18" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb3-19"><a href="#cb3-19" tabindex="-1"></a><span class="co">#&gt; Parameter    Estimate  Std.Error  z-value  Pr(&gt;|z|)  </span></span>
+<span id="cb3-20"><a href="#cb3-20" tabindex="-1"></a><span class="co">#&gt; x1           0.776408   0.070138  11.0697  0.00e+00  ***</span></span>
+<span id="cb3-21"><a href="#cb3-21" tabindex="-1"></a><span class="co">#&gt; x2          -0.675643   0.068318  -9.8897  0.00e+00  ***</span></span>
+<span id="cb3-22"><a href="#cb3-22" tabindex="-1"></a><span class="co">#&gt; Sigma_11     0.905183   0.451785   2.0036  4.51e-02  *</span></span>
+<span id="cb3-23"><a href="#cb3-23" tabindex="-1"></a><span class="co">#&gt; Sigma_21     0.894700   0.310679   2.8798  3.98e-03  **</span></span>
+<span id="cb3-24"><a href="#cb3-24" tabindex="-1"></a><span class="co">#&gt; Sigma_22     1.884033   0.575835   3.2718  1.07e-03  **</span></span>
+<span id="cb3-25"><a href="#cb3-25" tabindex="-1"></a><span class="co">#&gt; ASC_1        0.536159   0.078972   6.7893  1.13e-11  ***</span></span>
+<span id="cb3-26"><a href="#cb3-26" tabindex="-1"></a><span class="co">#&gt; ASC_2       -0.477738   0.105075  -4.5466  5.45e-06  ***</span></span>
+<span id="cb3-27"><a href="#cb3-27" tabindex="-1"></a><span class="co">#&gt; ASC_3        0.591089   0.077545   7.6225  2.49e-14  ***</span></span>
+<span id="cb3-28"><a href="#cb3-28" tabindex="-1"></a><span class="co">#&gt; ASC_4       -0.513880   0.105365  -4.8771  1.08e-06  ***</span></span>
+<span id="cb3-29"><a href="#cb3-29" tabindex="-1"></a><span class="co">#&gt; ---</span></span>
+<span id="cb3-30"><a href="#cb3-30" tabindex="-1"></a><span class="co">#&gt; Signif. codes:  &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05</span></span>
+<span id="cb3-31"><a href="#cb3-31" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb3-32"><a href="#cb3-32" tabindex="-1"></a><span class="co">#&gt; Random coefficient covariance (Sigma):</span></span>
+<span id="cb3-33"><a href="#cb3-33" tabindex="-1"></a><span class="co">#&gt;        w1     w2</span></span>
+<span id="cb3-34"><a href="#cb3-34" tabindex="-1"></a><span class="co">#&gt; w1 0.9052 0.8947</span></span>
+<span id="cb3-35"><a href="#cb3-35" tabindex="-1"></a><span class="co">#&gt; w2 0.8947 1.8840</span></span>
+<span id="cb3-36"><a href="#cb3-36" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb3-37"><a href="#cb3-37" tabindex="-1"></a><span class="co">#&gt; Std. Errors: BHHH (OPG) </span></span>
+<span id="cb3-38"><a href="#cb3-38" tabindex="-1"></a><span class="co">#&gt; Log-likelihood: -2435.84 </span></span>
+<span id="cb3-39"><a href="#cb3-39" tabindex="-1"></a><span class="co">#&gt; AIC: 4889.67  | BIC: 4940.08 </span></span>
+<span id="cb3-40"><a href="#cb3-40" tabindex="-1"></a><span class="co">#&gt; McFadden R2: 0.106 (adj: 0.102) | Hit rate: 0.452 </span></span>
+<span id="cb3-41"><a href="#cb3-41" tabindex="-1"></a><span class="co">#&gt; N: 2000  | Parameters: 9 </span></span>
+<span id="cb3-42"><a href="#cb3-42" tabindex="-1"></a><span class="co">#&gt; Optimization time: 0.56 s</span></span>
+<span id="cb3-43"><a href="#cb3-43" tabindex="-1"></a><span class="co">#&gt; Convergence: 3 ( NLOPT_FTOL_REACHED: Optimization stopped because ftol_rel or ftol_abs (above) was reached. )</span></span></code></pre></div>
+<p>This vignette uses <code>se_method = &quot;bhhh&quot;</code> because the
+outer-product calculation is fast and keeps package-build time short.
+For final empirical work, compare it with the default analytical-Hessian
+standard errors; when the data come from a choice-based or otherwise
+weighted sample, use <code>se_method = &quot;sandwich&quot;</code> so the reported
+covariance is the robust WESML sandwich rather than the inverse weighted
+Hessian. If WESML observations are also dependent within people or
+markets, use the weighted cluster sandwich
+(<code>se_method = &quot;cluster&quot;</code>, with <code>cluster_col</code>) and
+have enough independent clusters for its asymptotics.</p>
+<blockquote>
+<p><strong>Tip.</strong> For real applications increase the number of
+draws (<code>S</code>) until your estimates are stable, and keep
+<code>scale_vars = &quot;sd&quot;</code>. Stability in <code>S</code> is a
+statistical requirement, not just numerical hygiene: simulated ML with a
+fixed number of draws is biased — the log of an unbiased probability
+simulator is not unbiased — and the classical asymptotics require
+<code>S</code> to grow with the sample (see the <a href="https://fpcordeiro.github.io/choicer/articles/mixed_logit_math.html">math
+companion</a> for the conditions). If the solver struggles, pass an
+explicit <code>theta_init</code>: place the MNL slope and ASC estimates
+in the corresponding MXL parameter blocks and initialize the additional
+mean and Cholesky coordinates deliberately. Bounds can keep Cholesky
+diagonals away from numerically pathological regions. See
+<code>inst/simulations/mxl_simulation.R</code> for a fully hardened
+example.</p>
+</blockquote>
+</div>
+<div id="parameter-recovery" class="section level2">
+<h2>Parameter recovery</h2>
+<div class="sourceCode" id="cb4"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" tabindex="-1"></a><span class="fu">recovery_table</span>(fit, sim<span class="sc">$</span>true_params)</span>
+<span id="cb4-2"><a href="#cb4-2" tabindex="-1"></a><span class="co">#&gt; &lt;choicer_recovery&gt; model=choicer_mxl level=0.95</span></span>
+<span id="cb4-3"><a href="#cb4-3" tabindex="-1"></a><span class="co">#&gt;    parameter  group    true estimate     se    bias rel_bias_pct z_vs_true</span></span>
+<span id="cb4-4"><a href="#cb4-4" tabindex="-1"></a><span class="co">#&gt;       &lt;char&gt; &lt;char&gt;   &lt;num&gt;    &lt;num&gt;  &lt;num&gt;   &lt;num&gt;        &lt;num&gt;     &lt;num&gt;</span></span>
+<span id="cb4-5"><a href="#cb4-5" tabindex="-1"></a><span class="co">#&gt; 1:        x1   beta  0.8000   0.7764 0.0701 -0.0236       -2.949   -0.3364</span></span>
+<span id="cb4-6"><a href="#cb4-6" tabindex="-1"></a><span class="co">#&gt; 2:        x2   beta -0.6000  -0.6756 0.0683 -0.0756       12.607   -1.1072</span></span>
+<span id="cb4-7"><a href="#cb4-7" tabindex="-1"></a><span class="co">#&gt; 3:      L_11  sigma  0.0000  -0.0498 0.2496 -0.0498           NA   -0.1996</span></span>
+<span id="cb4-8"><a href="#cb4-8" tabindex="-1"></a><span class="co">#&gt; 4:      L_21  sigma  0.5000   0.9404 0.3057  0.4404       88.078    1.4406</span></span>
+<span id="cb4-9"><a href="#cb4-9" tabindex="-1"></a><span class="co">#&gt; 5:      L_22  sigma  0.1116  -0.0002 0.3566 -0.1117     -100.136   -0.3133</span></span>
+<span id="cb4-10"><a href="#cb4-10" tabindex="-1"></a><span class="co">#&gt; 6:     ASC_1    asc  0.5000   0.5362 0.0790  0.0362        7.232    0.4579</span></span>
+<span id="cb4-11"><a href="#cb4-11" tabindex="-1"></a><span class="co">#&gt; 7:     ASC_2    asc -0.5000  -0.4777 0.1051  0.0223       -4.452    0.2119</span></span>
+<span id="cb4-12"><a href="#cb4-12" tabindex="-1"></a><span class="co">#&gt; 8:     ASC_3    asc  0.5000   0.5911 0.0775  0.0911       18.218    1.1747</span></span>
+<span id="cb4-13"><a href="#cb4-13" tabindex="-1"></a><span class="co">#&gt; 9:     ASC_4    asc -0.5000  -0.5139 0.1054 -0.0139        2.776   -0.1317</span></span>
+<span id="cb4-14"><a href="#cb4-14" tabindex="-1"></a><span class="co">#&gt;    lower_ci upper_ci covers</span></span>
+<span id="cb4-15"><a href="#cb4-15" tabindex="-1"></a><span class="co">#&gt;       &lt;num&gt;    &lt;num&gt; &lt;lgcl&gt;</span></span>
+<span id="cb4-16"><a href="#cb4-16" tabindex="-1"></a><span class="co">#&gt; 1:   0.6389   0.9139   TRUE</span></span>
+<span id="cb4-17"><a href="#cb4-17" tabindex="-1"></a><span class="co">#&gt; 2:  -0.8095  -0.5417   TRUE</span></span>
+<span id="cb4-18"><a href="#cb4-18" tabindex="-1"></a><span class="co">#&gt; 3:  -0.5389   0.4393   TRUE</span></span>
+<span id="cb4-19"><a href="#cb4-19" tabindex="-1"></a><span class="co">#&gt; 4:   0.3412   1.5396   TRUE</span></span>
+<span id="cb4-20"><a href="#cb4-20" tabindex="-1"></a><span class="co">#&gt; 5:  -0.6991   0.6988   TRUE</span></span>
+<span id="cb4-21"><a href="#cb4-21" tabindex="-1"></a><span class="co">#&gt; 6:   0.3814   0.6909   TRUE</span></span>
+<span id="cb4-22"><a href="#cb4-22" tabindex="-1"></a><span class="co">#&gt; 7:  -0.6837  -0.2718   TRUE</span></span>
+<span id="cb4-23"><a href="#cb4-23" tabindex="-1"></a><span class="co">#&gt; 8:   0.4391   0.7431   TRUE</span></span>
+<span id="cb4-24"><a href="#cb4-24" tabindex="-1"></a><span class="co">#&gt; 9:  -0.7204  -0.3074   TRUE</span></span></code></pre></div>
+<p>The <code>beta</code> rows are the fixed coefficients, the
+<code>sigma</code> rows describe the covariance of the random
+coefficients (its Cholesky elements), and the <code>asc</code> rows are
+the alternative-specific constants.</p>
+</div>
+<div id="substitution-through-taste-heterogeneity" class="section level2">
+<h2>Substitution through taste heterogeneity</h2>
+<p>With random coefficients, diversion is mediated by the distribution
+of tastes. If the estimated mixing distribution captures economically
+meaningful heterogeneity, people who value one alternative tend to value
+nearby substitutes on that latent margin. Diversion can therefore depend
+on <em>which</em> attribute is changing, so
+<code>diversion_ratios()</code> takes a <code>wrt_var</code>:</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb5-1"><a href="#cb5-1" tabindex="-1"></a><span class="fu">elasticities</span>(fit, <span class="at">elast_var =</span> <span class="st">&quot;x2&quot;</span>)</span>
+<span id="cb5-2"><a href="#cb5-2" tabindex="-1"></a><span class="co">#&gt;   0         1         2         3         4</span></span>
+<span id="cb5-3"><a href="#cb5-3" tabindex="-1"></a><span class="co">#&gt; 0 0 -0.015656 -0.009793 -0.025914 -0.009414</span></span>
+<span id="cb5-4"><a href="#cb5-4" tabindex="-1"></a><span class="co">#&gt; 1 0 -0.023929 -0.005506 -0.017254 -0.005718</span></span>
+<span id="cb5-5"><a href="#cb5-5" tabindex="-1"></a><span class="co">#&gt; 2 0 -0.010723 -0.016649 -0.017014 -0.007051</span></span>
+<span id="cb5-6"><a href="#cb5-6" tabindex="-1"></a><span class="co">#&gt; 3 0 -0.008498 -0.006243 -0.006971 -0.006645</span></span>
+<span id="cb5-7"><a href="#cb5-7" tabindex="-1"></a><span class="co">#&gt; 4 0 -0.011956 -0.006111 -0.021578 -0.020221</span></span>
+<span id="cb5-8"><a href="#cb5-8" tabindex="-1"></a><span class="fu">diversion_ratios</span>(fit, <span class="at">wrt_var =</span> <span class="st">&quot;x2&quot;</span>)</span>
+<span id="cb5-9"><a href="#cb5-9" tabindex="-1"></a><span class="co">#&gt;        0      1      2      3      4</span></span>
+<span id="cb5-10"><a href="#cb5-10" tabindex="-1"></a><span class="co">#&gt; 0 0.0000 0.3435 0.3183 0.3533 0.3177</span></span>
+<span id="cb5-11"><a href="#cb5-11" tabindex="-1"></a><span class="co">#&gt; 1 0.3112 0.0000 0.2616 0.3195 0.2629</span></span>
+<span id="cb5-12"><a href="#cb5-12" tabindex="-1"></a><span class="co">#&gt; 2 0.1789 0.1623 0.0000 0.1658 0.1434</span></span>
+<span id="cb5-13"><a href="#cb5-13" tabindex="-1"></a><span class="co">#&gt; 3 0.3342 0.3336 0.2790 0.0000 0.2760</span></span>
+<span id="cb5-14"><a href="#cb5-14" tabindex="-1"></a><span class="co">#&gt; 4 0.1757 0.1605 0.1412 0.1614 0.0000</span></span>
+<span id="cb5-15"><a href="#cb5-15" tabindex="-1"></a></span>
+<span id="cb5-16"><a href="#cb5-16" tabindex="-1"></a><span class="co"># For a random-coefficient attribute the perturbation coordinate matters.</span></span>
+<span id="cb5-17"><a href="#cb5-17" tabindex="-1"></a><span class="fu">elasticities</span>(fit, <span class="at">elast_var =</span> <span class="st">&quot;w2&quot;</span>, <span class="at">is_random_coef =</span> <span class="cn">TRUE</span>)</span>
+<span id="cb5-18"><a href="#cb5-18" tabindex="-1"></a><span class="co">#&gt;   0        1        2        3        4</span></span>
+<span id="cb5-19"><a href="#cb5-19" tabindex="-1"></a><span class="co">#&gt; 0 0 -0.01809 -0.02890 -0.01330 -0.02617</span></span>
+<span id="cb5-20"><a href="#cb5-20" tabindex="-1"></a><span class="co">#&gt; 1 0  0.05861 -0.02036 -0.02040 -0.01905</span></span>
+<span id="cb5-21"><a href="#cb5-21" tabindex="-1"></a><span class="co">#&gt; 2 0 -0.02383  0.13609 -0.02394 -0.02000</span></span>
+<span id="cb5-22"><a href="#cb5-22" tabindex="-1"></a><span class="co">#&gt; 3 0 -0.02050 -0.01863  0.04831 -0.01820</span></span>
+<span id="cb5-23"><a href="#cb5-23" tabindex="-1"></a><span class="co">#&gt; 4 0 -0.02493 -0.02164 -0.02110  0.13556</span></span>
+<span id="cb5-24"><a href="#cb5-24" tabindex="-1"></a><span class="fu">diversion_ratios</span>(fit, <span class="at">wrt_var =</span> <span class="st">&quot;w2&quot;</span>, <span class="at">is_random_coef =</span> <span class="cn">TRUE</span>)</span>
+<span id="cb5-25"><a href="#cb5-25" tabindex="-1"></a><span class="co">#&gt;         0       1      2        3       4</span></span>
+<span id="cb5-26"><a href="#cb5-26" tabindex="-1"></a><span class="co">#&gt; 0  0.0000  0.5513 -6.311  0.53192 -0.4087</span></span>
+<span id="cb5-27"><a href="#cb5-27" tabindex="-1"></a><span class="co">#&gt; 1 -2.0961  0.0000  8.744  0.62491  1.8795</span></span>
+<span id="cb5-28"><a href="#cb5-28" tabindex="-1"></a><span class="co">#&gt; 2  1.3819  0.5036  0.000 -0.08724 -0.7105</span></span>
+<span id="cb5-29"><a href="#cb5-29" tabindex="-1"></a><span class="co">#&gt; 3  1.4015 -0.4331  1.050  0.00000  0.2397</span></span>
+<span id="cb5-30"><a href="#cb5-30" tabindex="-1"></a><span class="co">#&gt; 4  0.3127  0.3782 -2.482 -0.06959  0.0000</span></span></code></pre></div>
+<p>The rest of the toolkit — <code>predict()</code>, <code>wtp()</code>,
+<code>consumer_surplus()</code>, <code>blp()</code> — uses the same
+fitted object as in the <a href="choicer.html">getting-started
+vignette</a>. Prediction and share inversion integrate over the fitted
+taste distribution; <code>wtp()</code> respects choicer’s supported
+coefficient parameterizations. In v0.2.0,
+<code>consumer_surplus()</code> requires a fixed price coefficient
+because inverse moments of a random price coefficient need not
+exist.</p>
+</div>
+<div id="identification-and-tails" class="section level2">
+<h2>Identification and tails</h2>
+<p>The mixed logit is a genuine generalization of the MNL — if tastes
+are in fact homogeneous, the estimator simply returns a near-zero
+variance and you are back to a logit. The issue is not that random
+coefficients are intrinsically fragile. The issue is identification: the
+additional substitution structure is carried by the mixing distribution
+<span class="math inline">\(f(\beta)\)</span>, and <span class="math inline">\(f(\beta)\)</span> is often hardest to pin down
+where it matters most for welfare and diversion — in the tails.</p>
+<p>Two consequences are worth keeping in front of you:</p>
+<ul>
+<li><p><strong>The tails drive the economics you report.</strong> A
+lognormal price coefficient puts a slice of the population at near-zero
+price sensitivity, which can give a willingness-to-pay distribution with
+<em>no finite mean</em> and explosive welfare numbers. An unbounded
+normal coefficient implies a fraction of consumers with the <em>wrong
+sign</em> (who prefer paying more). These artifacts come from the
+assumed shape of <span class="math inline">\(f\)</span>, not from the
+data, and the estimator will happily contort a tail to match an
+aggregate moment.</p></li>
+<li><p><strong><span class="math inline">\(f(\beta)\)</span> is hard to
+identify and estimate in practice.</strong> A single cross-section of
+choices — one decision per person, a fixed menu — carries little
+information about the spread of tastes. In mixed-logit research,
+reliable estimation typically uses <strong>repeated choices from the
+same individual</strong> (panel data), <strong>substantial variation in
+choice sets or attributes across markets</strong> (the BLP setting), or
+the rich, designed attribute variation of a stated-preference
+experiment. Without one of these, the random-coefficient variances are
+weakly identified and the estimates can be fragile. Note that on panel
+data <code>run_mxlogit()</code> does not exploit the first source: it
+still maximizes a <em>cross-sectional</em> simulated likelihood — each
+choice situation is integrated separately rather than sharing a taste
+draw across that person’s likelihood contributions. Cluster-robust
+standard errors (<code>cluster_col=</code>, or
+<code>vcov(fit, type = &quot;cluster&quot;)</code>; see <a href="inference.html">Which standard errors, and when</a>) repair the
+inference for within-person dependence, but the model that actually
+<em>uses</em> the panel to identify the taste distribution is the
+hierarchical Bayesian logit, <a href="hb.html"><code>run_hmnlogit()</code></a>.</p></li>
+</ul>
+</div>
+<div id="a-research-checklist" class="section level2">
+<h2>A research checklist</h2>
+<p>For a reportable <code>run_mxlogit()</code> application:</p>
+<ol style="list-style-type: decimal">
+<li>Fit a transparent MNL benchmark, scale poorly conditioned
+covariates, and use its estimates to inform explicit
+<code>theta_init</code> values.</li>
+<li>Run several manually supplied starting values and retain their
+objective, convergence code and substantive outputs. choicer does not
+yet automate multistart estimation.</li>
+<li>Increase <code>S</code> until coefficients, covariance elements,
+standard errors, WTP, elasticities and diversion ratios are stable—not
+merely until the optimizer reports convergence.</li>
+<li>Compare choicer’s supported normal and shifted-lognormal
+restrictions where economically meaningful, and show what their tails
+imply for signs and WTP.</li>
+<li>Compare the analytical-Hessian and BHHH results; use robust or WESML
+inference for weighting/misspecification and cluster inference for
+repeated sampling units as appropriate.</li>
+<li>Treat clustering of panel tasks as an inference correction only. If
+tastes should persist within person, use <code>run_hmnlogit()</code> so
+the likelihood itself uses that repetition.</li>
+<li>Compare substitution and welfare with the MNL or NL benchmark and
+state which data variation, rather than the mixing distribution alone,
+earns the change.</li>
+</ol>
+<p>Bounded/censored mixing distributions, WTP-space estimation, and
+latent-class logit can be useful alternative modeling strategies, but
+they are <strong>not implemented in choicer v0.2.0</strong>. They
+require another implementation today and are roadmap candidates here;
+they should not be presented as options to <code>run_mxlogit()</code>.
+The broader tradeoff is laid out in <a href="choicer.html#choosing-among-choice-models">Choosing among choice
+models</a>.</p>
+</div>
+<div id="references" class="section level2">
+<h2>References</h2>
+<p>McFadden, D. and Train, K. (2000). Mixed MNL models for discrete
+response. <em>Journal of Applied Econometrics</em>, 15(5), 447-470.</p>
+<p>Revelt, D. and Train, K. (1998). Mixed logit with repeated choices:
+households’ choices of appliance efficiency level. <em>Review of
+Economics and Statistics</em>, 80(4), 647-657.</p>
+<p>Train, K. E. (2009). <em>Discrete Choice Methods with Simulation</em>
+(2nd ed.). Cambridge University Press.</p>
+<p>Train, K. and Weeks, M. (2005). Discrete choice models in preference
+space and willingness-to-pay space. In R. Scarpa and A. Alberini (Eds.),
+<em>Applications of Simulation Methods in Environmental and Resource
+Economics</em>. Springer.</p>
+</div>
+
+
+
+<!-- code folding -->
+
+
+<!-- dynamically load mathjax for compatibility with self-contained -->
+<script>
+  (function () {
+    var script = document.createElement("script");
+    script.type = "text/javascript";
+    script.src  = "https://mathjax.rstudio.com/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML";
+    document.getElementsByTagName("head")[0].appendChild(script);
+  })();
+</script>
+
+</body>
+</html>

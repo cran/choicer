@@ -5,13 +5,15 @@
 #   choicer_mnl -> choicer_fit
 #   choicer_mxl -> choicer_fit
 #   choicer_nl  -> choicer_fit
+#   choicer_mnp (standalone: posterior-draws object, no loglik / convergence /
+#                lazy-Hessian contract, so it does not inherit choicer_fit)
 
 # --- Constructors -----------------------------------------------------------
 
 #' Construct a choicer_mnl object
 #' @param call The matched call from run_mnlogit()
 #' @param coefficients Named numeric vector of point estimates
-#' @param loglik Scalar log-likelihood at optimum (positive)
+#' @param loglik Scalar log-likelihood at optimum
 #' @param nobs Integer number of choice situations
 #' @param n_params Integer number of estimated parameters
 #' @param convergence Integer convergence code from optimizer
@@ -25,6 +27,15 @@
 #' @param vcov Named variance-covariance matrix (or NULL for lazy computation)
 #' @param se Named numeric vector of standard errors (or NULL for lazy computation)
 #' @param data List of prepared inputs (X, alt_idx, choice_idx, M, weights) or NULL
+#' @param scale_vars Character. Pre-estimation scaling applied to the design
+#'   matrix: \code{"none"} (default), \code{"sd"}, \code{"mad"}, or \code{"iqr"}.
+#' @param sX Named numeric vector of column scales used to standardize X during
+#'   optimization. Defaults to a vector of 1s when scale_vars = 'none'.
+#' @param se_method Character. Method used for standard errors: \code{"hessian"}
+#'   (analytical Hessian, default), \code{"bhhh"} (outer product of gradients),
+#'   or \code{"sandwich"} (robust Huber--White / WESML variance).
+#' @param choice_sampling Optional list recording choice-based-sampling
+#'   provenance (scheme, population/sample shares, meat type), or NULL.
 #' @returns A choicer_mnl object (S3 class)
 #' @noRd
 new_choicer_mnl <- function(call, coefficients, loglik,
@@ -32,7 +43,10 @@ new_choicer_mnl <- function(call, coefficients, loglik,
                             data_spec, alt_mapping, param_map,
                             use_asc, include_outside_option,
                             optimizer,
-                            vcov = NULL, se = NULL, data = NULL) {
+                            vcov = NULL, se = NULL, data = NULL,
+                            scale_vars = "none", sX = NULL,
+                            se_method = "hessian",
+                            choice_sampling = NULL) {
   structure(
     list(
       call = call,
@@ -51,7 +65,11 @@ new_choicer_mnl <- function(call, coefficients, loglik,
       use_asc = use_asc,
       include_outside_option = include_outside_option,
       optimizer = optimizer,
-      data = data
+      data = data,
+      scale_vars = scale_vars,
+      sX = sX,
+      se_method = se_method,
+      choice_sampling = choice_sampling
     ),
     class = c("choicer_mnl", "choicer_fit")
   )
@@ -77,6 +95,8 @@ new_choicer_mnl <- function(call, coefficients, loglik,
 #'   \code{scale_vars = "none"}; equals \code{apply(W, 2, sd)} for normal
 #'   random-coefficient columns when \code{scale_vars = "sd"}, with entries for
 #'   log-normal columns (\code{rc_dist[k] == 1}) carved out to 1.
+#' @param choice_sampling Optional list recording choice-based-sampling
+#'   provenance (scheme, population/sample shares, meat type), or NULL.
 #' @returns A choicer_mxl object (S3 class)
 #' @noRd
 new_choicer_mxl <- function(call, coefficients, loglik,
@@ -90,7 +110,8 @@ new_choicer_mxl <- function(call, coefficients, loglik,
                             rc_mean = FALSE, sigma = NULL,
                             se_method = "hessian",
                             scale_vars = "none",
-                            sX = NULL, sW = NULL) {
+                            sX = NULL, sW = NULL,
+                            choice_sampling = NULL) {
   structure(
     list(
       call = call,
@@ -118,7 +139,8 @@ new_choicer_mxl <- function(call, coefficients, loglik,
       se_method = se_method,
       scale_vars = scale_vars,
       sX = sX,
-      sW = sW
+      sW = sW,
+      choice_sampling = choice_sampling
     ),
     class = c("choicer_mxl", "choicer_fit")
   )
@@ -127,6 +149,15 @@ new_choicer_mxl <- function(call, coefficients, loglik,
 #' Construct a choicer_nl object
 #' @inheritParams new_choicer_mnl
 #' @param lambda Named numeric vector of nest parameters
+#' @param nest_idx Integer vector of length J mapping each (inside) alternative,
+#'   in alt_mapping row order, to its 1-based nest index. Stored top-level so
+#'   newdata prediction works even when data = NULL (keep_data = FALSE).
+#' @param se_method Character. Method used for standard errors: \code{"hessian"}
+#'   (analytical Hessian, default), \code{"numeric"} (finite-difference oracle),
+#'   \code{"bhhh"} (outer product of gradients), or \code{"sandwich"} (robust
+#'   Huber--White / WESML variance).
+#' @param choice_sampling Optional list recording choice-based-sampling
+#'   provenance (scheme, population/sample shares, meat type), or NULL.
 #' @returns A choicer_nl object (S3 class)
 #' @noRd
 new_choicer_nl <- function(call, coefficients, loglik,
@@ -135,7 +166,9 @@ new_choicer_nl <- function(call, coefficients, loglik,
                            use_asc, include_outside_option,
                            optimizer,
                            vcov = NULL, se = NULL, data = NULL,
-                           lambda = NULL) {
+                           lambda = NULL, nest_idx = NULL,
+                           se_method = "hessian",
+                           choice_sampling = NULL) {
   structure(
     list(
       call = call,
@@ -155,9 +188,163 @@ new_choicer_nl <- function(call, coefficients, loglik,
       include_outside_option = include_outside_option,
       optimizer = optimizer,
       data = data,
-      lambda = lambda
+      lambda = lambda,
+      nest_idx = nest_idx,
+      se_method = se_method,
+      choice_sampling = choice_sampling
     ),
     class = c("choicer_nl", "choicer_fit")
+  )
+}
+
+#' Construct a choicer_mnp object
+#' @param call The matched call from run_mnprobit()
+#' @param coefficients Named numeric vector of posterior means of the
+#'   identified coefficients (beta / sqrt(sigma_11))
+#' @param se Named numeric vector of posterior standard deviations of the
+#'   identified coefficient draws
+#' @param vcov Posterior covariance matrix of the identified coefficient draws
+#' @param sigma Posterior-mean identified covariance matrix of the utility
+#'   differences (p x p)
+#' @param draws List of draw matrices: beta / sigma (identified scale) and
+#'   beta_raw / sigma_raw (unnormalized chain output)
+#' @param prior List of resolved prior settings (beta_bar, A, nu, V)
+#' @param mcmc List of resolved MCMC settings (R, burn, thin, seed, R_keep)
+#' @param nobs Integer number of choice situations
+#' @param n_params Integer number of coefficients
+#' @param data_spec List with column name metadata (id_col, alt_col, etc.)
+#' @param alt_mapping data.table mapping alternatives to summary statistics
+#' @param base_alt Label of the base (differencing) alternative
+#' @param param_map Named list of integer index vectors (beta, asc)
+#' @param use_asc Logical whether ASCs were used
+#' @param sampler List with sampler metadata (name, elapsed_time)
+#' @param data List of prepared inputs (X, y, p) or NULL
+#' @returns A choicer_mnp object (S3 class)
+#' @noRd
+new_choicer_mnp <- function(call, coefficients, se, vcov, sigma, draws,
+                            prior, mcmc, nobs, n_params,
+                            data_spec, alt_mapping, base_alt,
+                            param_map, use_asc, sampler, data = NULL) {
+  structure(
+    list(
+      call = call,
+      model = "mnp",
+      coefficients = coefficients,
+      se = se,
+      vcov = vcov,
+      sigma = sigma,
+      draws = draws,
+      prior = prior,
+      mcmc = mcmc,
+      nobs = nobs,
+      n_params = n_params,
+      data_spec = data_spec,
+      alt_mapping = alt_mapping,
+      base_alt = base_alt,
+      param_map = param_map,
+      use_asc = use_asc,
+      sampler = sampler,
+      data = data
+    ),
+    # Intentionally not a choicer_fit: this is a posterior-draws object with
+    # no loglik / convergence and an eagerly computed vcov, so none of the
+    # choicer_fit methods (logLik, AIC, ensure_vcov, predict, ...) apply.
+    class = "choicer_mnp"
+  )
+}
+
+#' Construct a choicer_hmnl / choicer_hmnp object
+#'
+#' Internal constructors for the hierarchical Bayes fits. Both share the
+#' `choicer_hb` parent class, which carries the print / summary / coef /
+#' vcov / nobs methods (R/methods.R) and the post-estimation suite. Like
+#' `choicer_mnp`, these are posterior-draws objects, intentionally NOT
+#' `choicer_fit`.
+#'
+#' @param ... Named fields; see [run_hmnlogit()] for the layout.
+#' @returns A classed list.
+#' @noRd
+new_choicer_hmnl <- function(call, coefficients, se, vcov, theta_summary,
+                             sigma_d2_summary, W_mean, delta, xi, beta_i,
+                             draws, accept, rhat, prior, mcmc, nobs,
+                             n_persons, J, P, K_struct, param_map,
+                             alt_mapping, data_spec, cf_active, sampler,
+                             data = NULL, chains = NULL) {
+  structure(
+    list(
+      call = call,
+      model = "hmnl",
+      coefficients = coefficients,
+      se = se,
+      vcov = vcov,
+      theta_summary = theta_summary,
+      sigma_d2_summary = sigma_d2_summary,
+      W_mean = W_mean,
+      delta = delta,
+      xi = xi,
+      beta_i = beta_i,
+      draws = draws,
+      accept = accept,
+      rhat = rhat,
+      prior = prior,
+      mcmc = mcmc,
+      nobs = nobs,
+      n_persons = n_persons,
+      J = J,
+      P = P,
+      K_struct = K_struct,
+      param_map = param_map,
+      alt_mapping = alt_mapping,
+      data_spec = data_spec,
+      cf_active = cf_active,
+      sampler = sampler,
+      data = data,
+      chains = chains
+    ),
+    class = c("choicer_hmnl", "choicer_hb")
+  )
+}
+
+#' @rdname new_choicer_hmnl
+#' @noRd
+new_choicer_hmnp <- function(call, coefficients, se, vcov, theta_summary,
+                             sigma_d2_summary, W_mean, delta, xi, beta_i,
+                             draws, rhat, prior, mcmc, nobs,
+                             n_persons, J, P, K_struct, param_map,
+                             alt_mapping, data_spec, cf_active, sampler,
+                             data = NULL, chains = NULL) {
+  structure(
+    list(
+      call = call,
+      model = "hmnp",
+      coefficients = coefficients,
+      se = se,
+      vcov = vcov,
+      theta_summary = theta_summary,
+      sigma_d2_summary = sigma_d2_summary,
+      W_mean = W_mean,
+      delta = delta,
+      xi = xi,
+      beta_i = beta_i,
+      draws = draws,
+      accept = NULL,   # fully conjugate: no Metropolis steps
+      rhat = rhat,
+      prior = prior,
+      mcmc = mcmc,
+      nobs = nobs,
+      n_persons = n_persons,
+      J = J,
+      P = P,
+      K_struct = K_struct,
+      param_map = param_map,
+      alt_mapping = alt_mapping,
+      data_spec = data_spec,
+      cf_active = cf_active,
+      sampler = sampler,
+      data = data,
+      chains = chains
+    ),
+    class = c("choicer_hmnp", "choicer_hb")
   )
 }
 
@@ -174,14 +361,21 @@ new_choicer_nl <- function(call, coefficients, loglik,
 ensure_vcov <- function(object) {
   if (!is.null(object$vcov)) return(object)
 
-  if (is.null(object$data)) {
+  if (is.null(object[["data"]])) {
     message("Cannot compute standard errors: no data stored. ",
             "Refit with keep_data = TRUE.")
     return(object)
   }
 
-  hess <- compute_hessian(object)
-  result <- invert_hessian(hess)
+  se_method <- object$se_method %||% "hessian"
+  result <- if (identical(se_method, "sandwich")) {
+    compute_sandwich_vcov(object)
+  } else if (identical(se_method, "cluster")) {
+    # cluster = NULL routes to the stored, already-aligned fit-time labels.
+    .assemble_score_vcov(object, type = "cluster")
+  } else {
+    invert_hessian(compute_hessian(object))
+  }
 
   object$vcov <- result$vcov
   object$se <- result$se
@@ -342,75 +536,118 @@ normalize_optim_result <- function(result) {
 #' @returns The Hessian matrix evaluated at \code{object$coefficients}.
 #' @noRd
 compute_hessian <- function(object) {
-  if (is.null(object$data)) {
+  if (is.null(object[["data"]])) {
     stop("Cannot compute Hessian: no data stored. Refit with keep_data = TRUE.")
   }
 
   theta <- object$coefficients
 
   switch(object$model,
-    mnl = mnl_loglik_hessian_parallel(
-      theta = theta,
-      X = object$data$X,
-      alt_idx = object$data$alt_idx,
-      choice_idx = object$data$choice_idx,
-      M = object$data$M,
-      weights = object$data$weights,
-      use_asc = object$use_asc,
-      include_outside_option = object$include_outside_option
-    ),
-    mxl = {
-      eta_draws <- get_halton_normals(
-        S = object$draws_info$S,
-        N = object$draws_info$N,
-        K_w = object$draws_info$K_w
-      )
-      se_method <- object$se_method %||% "hessian"
-      if (se_method == "bhhh") {
-        mxl_bhhh_parallel(
+    mnl = {
+      se_method_mnl <- object$se_method %||% "hessian"
+      if (identical(se_method_mnl, "bhhh")) {
+        mnl_bhhh_parallel(
           theta = theta,
-          X = object$data$X,
-          W = object$data$W,
-          alt_idx = object$data$alt_idx,
-          choice_idx = object$data$choice_idx,
-          M = object$data$M,
-          weights = object$data$weights,
-          eta_draws = eta_draws,
-          rc_dist = object$rc_dist,
-          rc_correlation = object$rc_correlation,
-          rc_mean = object$rc_mean,
+          X = object[["data"]]$X,
+          alt_idx = object[["data"]]$alt_idx,
+          choice_idx = object[["data"]]$choice_idx,
+          M = object[["data"]]$M,
+          weights = object[["data"]]$weights,
           use_asc = object$use_asc,
           include_outside_option = object$include_outside_option
         )
       } else {
-        mxl_hessian_parallel(
+        mnl_loglik_hessian_parallel(
           theta = theta,
-          X = object$data$X,
-          W = object$data$W,
-          alt_idx = object$data$alt_idx,
-          choice_idx = object$data$choice_idx,
-          M = object$data$M,
-          weights = object$data$weights,
-          eta_draws = eta_draws,
-          rc_dist = object$rc_dist,
-          rc_correlation = object$rc_correlation,
-          rc_mean = object$rc_mean,
+          X = object[["data"]]$X,
+          alt_idx = object[["data"]]$alt_idx,
+          choice_idx = object[["data"]]$choice_idx,
+          M = object[["data"]]$M,
+          weights = object[["data"]]$weights,
           use_asc = object$use_asc,
           include_outside_option = object$include_outside_option
         )
       }
     },
-    nl = nl_loglik_numeric_hessian(
-      theta = theta,
-      X = object$data$X,
-      alt_idx = object$data$alt_idx,
-      choice_idx = object$data$choice_idx,
-      nest_idx = object$data$nest_idx,
-      M = object$data$M,
-      weights = object$data$weights,
-      use_asc = object$use_asc,
-      include_outside_option = object$include_outside_option
-    ),
+    mxl = {
+      gp <- .mxl_gen_params(object$draws_info)
+      se_method <- object$se_method %||% "hessian"
+      if (se_method == "bhhh") {
+        mxl_bhhh_parallel(
+          theta = theta,
+          X = object[["data"]]$X,
+          W = object[["data"]]$W,
+          alt_idx = object[["data"]]$alt_idx,
+          choice_idx = object[["data"]]$choice_idx,
+          M = object[["data"]]$M,
+          weights = object[["data"]]$weights,
+          eta_draws = gp$eta_draws,
+          rc_dist = object$rc_dist,
+          rc_correlation = object$rc_correlation,
+          rc_mean = object$rc_mean,
+          use_asc = object$use_asc,
+          include_outside_option = object$include_outside_option,
+          gen_seed = gp$gen_seed, gen_scramble = gp$gen_scramble, gen_S = gp$gen_S
+        )
+      } else {
+        mxl_hessian_parallel(
+          theta = theta,
+          X = object[["data"]]$X,
+          W = object[["data"]]$W,
+          alt_idx = object[["data"]]$alt_idx,
+          choice_idx = object[["data"]]$choice_idx,
+          M = object[["data"]]$M,
+          weights = object[["data"]]$weights,
+          eta_draws = gp$eta_draws,
+          rc_dist = object$rc_dist,
+          rc_correlation = object$rc_correlation,
+          rc_mean = object$rc_mean,
+          use_asc = object$use_asc,
+          include_outside_option = object$include_outside_option,
+          gen_seed = gp$gen_seed, gen_scramble = gp$gen_scramble, gen_S = gp$gen_S
+        )
+      }
+    },
+    nl = {
+      se_method_nl <- object$se_method %||% "hessian"
+      if (identical(se_method_nl, "numeric")) {
+        nl_loglik_numeric_hessian(
+          theta = theta,
+          X = object[["data"]]$X,
+          alt_idx = object[["data"]]$alt_idx,
+          choice_idx = object[["data"]]$choice_idx,
+          nest_idx = object[["data"]]$nest_idx,
+          M = object[["data"]]$M,
+          weights = object[["data"]]$weights,
+          use_asc = object$use_asc,
+          include_outside_option = object$include_outside_option
+        )
+      } else if (identical(se_method_nl, "bhhh")) {
+        nl_bhhh_parallel(
+          theta = theta,
+          X = object[["data"]]$X,
+          alt_idx = object[["data"]]$alt_idx,
+          choice_idx = object[["data"]]$choice_idx,
+          nest_idx = object[["data"]]$nest_idx,
+          M = object[["data"]]$M,
+          weights = object[["data"]]$weights,
+          use_asc = object$use_asc,
+          include_outside_option = object$include_outside_option
+        )
+      } else {
+        nl_loglik_hessian_parallel(
+          theta = theta,
+          X = object[["data"]]$X,
+          alt_idx = object[["data"]]$alt_idx,
+          choice_idx = object[["data"]]$choice_idx,
+          nest_idx = object[["data"]]$nest_idx,
+          M = object[["data"]]$M,
+          weights = object[["data"]]$weights,
+          use_asc = object$use_asc,
+          include_outside_option = object$include_outside_option
+        )
+      }
+    },
     stop("Unknown model type: '", object$model, "'.")
   )
 }
@@ -453,4 +690,344 @@ invert_hessian <- function(hess) {
   }
 
   list(vcov = vcov_mat, se = se)
+}
+
+#' Combine bread and meat into a robust sandwich variance
+#'
+#' Forms \code{V = A^{-1} B A^{-1}} from the (weighted) negated Hessian
+#' \code{A} (bread) and the (weight-squared) outer-product-of-gradients
+#' \code{B} (meat), with the same singular / not-positive-definite guards as
+#' \code{invert_hessian()}.
+#'
+#' @param A Bread matrix (observed information; weighted negated Hessian).
+#' @param B Meat matrix (weighted outer product of per-individual scores).
+#' @returns List with \code{vcov} (matrix or NULL) and \code{se} (numeric).
+#' @noRd
+.sandwich_combine <- function(A, B) {
+  p_len <- nrow(A)
+  vcov_mat <- NULL
+  se <- rep(NA_real_, p_len)
+
+  singular_flag <- FALSE
+  tryCatch({
+    Ainv <- solve(A)
+    vcov_mat <- Ainv %*% B %*% Ainv
+  }, error = function(e) {
+    singular_flag <<- TRUE
+    message("Error inverting information (bread) matrix (likely singular): ",
+            e$message)
+  })
+
+  if (!singular_flag && !is.null(vcov_mat)) {
+    vcov_mat <- (vcov_mat + t(vcov_mat)) / 2   # symmetrize away FP asymmetry
+    diag_vcov <- diag(vcov_mat)
+    neg <- !is.na(diag_vcov) & diag_vcov < 0
+    if (any(neg)) {
+      message(
+        "Sandwich covariance is not positive definite; ",
+        sum(neg), " variance(s) negative. Standard errors set to NA for ",
+        "those parameters."
+      )
+      diag_vcov[neg] <- NA_real_
+    }
+    se <- sqrt(diag_vcov)
+  } else {
+    message("Standard errors set to NA due to sandwich inversion failure.")
+  }
+
+  list(vcov = vcov_mat, se = se)
+}
+
+#' Robust (Huber-White) sandwich vcov for a fitted logit model
+#'
+#' Computes \code{V = A^{-1} B A^{-1}} from stored (natural-scale) data, where
+#' \code{A = sum_i w_i (-H_i)} is the weighted negated Hessian and
+#' \code{B = sum_i w_i^2 s_i s_i'} is the weight-squared outer product of
+#' per-individual scores — the \code{"robust"} case of the shared
+#' \code{.assemble_score_vcov()} path (\code{crossprod(w * S)} over the
+#' per-situation score matrix). Valid under choice-based / WESML weighting,
+#' where the plain inverse-Hessian is not. Supported for MNL, MXL and NL fits.
+#'
+#' @param object A fitted \code{choicer_fit} object (MNL / MXL / NL) with
+#'   \code{keep_data = TRUE}.
+#' @returns List with \code{vcov} and \code{se}.
+#' @noRd
+compute_sandwich_vcov <- function(object) {
+  .assemble_score_vcov(object, type = "robust")
+}
+
+#' Per-situation score matrix from stored data
+#'
+#' Dispatches to the internal \code{*_scores_parallel} C++ kernels and returns
+#' the \code{N x p} matrix whose row \code{i} is the weight-free score of
+#' choice situation \code{i} evaluated at the fitted coefficients. For MXL,
+#' Halton draws are regenerated deterministically from \code{draws_info}
+#' (mirroring \code{compute_hessian()}).
+#'
+#' @param object A fitted \code{choicer_fit} object (MNL / MXL / NL) with
+#'   \code{keep_data = TRUE}.
+#' @returns Numeric matrix, \code{nobs x n_params}.
+#' @noRd
+compute_scores <- function(object) {
+  if (is.null(object[["data"]])) {
+    stop("Cannot compute scores: no data stored. Refit with keep_data = TRUE.")
+  }
+  if (!object$model %in% c("mnl", "mxl", "nl")) {
+    stop("Score-based standard errors are implemented for multinomial (MNL), ",
+         "mixed (MXL) and nested (NL) logit only.")
+  }
+
+  theta <- object$coefficients
+  d <- object[["data"]]
+
+  switch(object$model,
+    mnl = mnl_scores_parallel(
+      theta = theta, X = d$X, alt_idx = d$alt_idx, choice_idx = d$choice_idx,
+      M = d$M, use_asc = object$use_asc,
+      include_outside_option = object$include_outside_option
+    ),
+    nl = nl_scores_parallel(
+      theta = theta, X = d$X, alt_idx = d$alt_idx, choice_idx = d$choice_idx,
+      nest_idx = d$nest_idx, M = d$M, use_asc = object$use_asc,
+      include_outside_option = object$include_outside_option
+    ),
+    mxl = {
+      gp <- .mxl_gen_params(object$draws_info)
+      mxl_scores_parallel(
+        theta = theta, X = d$X, W = d$W,
+        alt_idx = d$alt_idx, choice_idx = d$choice_idx,
+        M = d$M, eta_draws = gp$eta_draws,
+        rc_dist = object$rc_dist, rc_correlation = object$rc_correlation,
+        rc_mean = object$rc_mean, use_asc = object$use_asc,
+        include_outside_option = object$include_outside_option,
+        gen_seed = gp$gen_seed, gen_scramble = gp$gen_scramble, gen_S = gp$gen_S
+      )
+    }
+  )
+}
+
+#' Bread matrix: weighted negated Hessian from stored data
+#'
+#' Always the analytical Hessian (numeric fallback for NL fits estimated with
+#' \code{se_method = "numeric"}), regardless of \code{object$se_method} —
+#' unlike \code{compute_hessian()}, which returns the BHHH matrix for
+#' \code{se_method = "bhhh"} fits.
+#'
+#' @noRd
+.compute_bread <- function(object) {
+  theta <- object$coefficients
+  d <- object[["data"]]
+  w <- d$weights
+
+  switch(object$model,
+    mnl = mnl_loglik_hessian_parallel(
+      theta = theta, X = d$X, alt_idx = d$alt_idx, choice_idx = d$choice_idx,
+      M = d$M, weights = w, use_asc = object$use_asc,
+      include_outside_option = object$include_outside_option
+    ),
+    nl = if (identical(object$se_method %||% "hessian", "numeric")) {
+      nl_loglik_numeric_hessian(
+        theta = theta, X = d$X, alt_idx = d$alt_idx, choice_idx = d$choice_idx,
+        nest_idx = d$nest_idx, M = d$M, weights = w, use_asc = object$use_asc,
+        include_outside_option = object$include_outside_option
+      )
+    } else {
+      nl_loglik_hessian_parallel(
+        theta = theta, X = d$X, alt_idx = d$alt_idx, choice_idx = d$choice_idx,
+        nest_idx = d$nest_idx, M = d$M, weights = w, use_asc = object$use_asc,
+        include_outside_option = object$include_outside_option
+      )
+    },
+    mxl = {
+      gp <- .mxl_gen_params(object$draws_info)
+      mxl_hessian_parallel(
+        theta = theta, X = d$X, W = d$W,
+        alt_idx = d$alt_idx, choice_idx = d$choice_idx,
+        M = d$M, weights = w, eta_draws = gp$eta_draws,
+        rc_dist = object$rc_dist, rc_correlation = object$rc_correlation,
+        rc_mean = object$rc_mean, use_asc = object$use_asc,
+        include_outside_option = object$include_outside_option,
+        gen_seed = gp$gen_seed, gen_scramble = gp$gen_scramble, gen_S = gp$gen_S
+      )
+    }
+  )
+}
+
+#' Meat matrix from a per-situation score matrix
+#'
+#' One code path for every score-based variance estimator:
+#' \describe{
+#'   \item{bhhh}{\code{crossprod(sqrt(w) * S)} — the ordinary weighted
+#'     BHHH/OPG information \eqn{\sum_i w_i s_i s_i'}.}
+#'   \item{robust}{\code{crossprod(w * S)} — the Huber-White / WESML sandwich
+#'     meat \eqn{\sum_i w_i^2 s_i s_i'} (the \eqn{w^2} special case).}
+#'   \item{cluster}{\code{crossprod(rowsum(w * S, cluster))} — within-cluster
+#'     sums of weighted scores, then their outer product
+#'     \eqn{\sum_g (\sum_{i \in g} w_i s_i)(\sum_{i \in g} w_i s_i)'}.
+#'     Invariant to the ordering of cluster labels (\code{rowsum} groups by
+#'     value). No small-sample (\eqn{G/(G-1)}) correction is applied.}
+#' }
+#'
+#' @param S \code{N x p} score matrix (rows are weight-free scores).
+#' @param w Length-\code{N} weight vector.
+#' @param type One of \code{"bhhh"}, \code{"robust"}, \code{"cluster"}.
+#' @param cluster Length-\code{N} cluster labels (required for
+#'   \code{type = "cluster"}).
+#' @returns \code{p x p} meat matrix.
+#' @noRd
+.score_meat <- function(S, w, type, cluster = NULL) {
+  switch(type,
+    bhhh = crossprod(sqrt(w) * S),
+    robust = crossprod(w * S),
+    cluster = {
+      if (is.null(cluster)) {
+        stop("Clustered standard errors need `cluster`: a vector with one ",
+             "cluster label per choice situation (or fit with `cluster_col=`).",
+             call. = FALSE)
+      }
+      if (length(cluster) != nrow(S)) {
+        stop("`cluster` has length ", length(cluster), " but the model has ",
+             nrow(S), " choice situations. Supply one cluster label per ",
+             "choice situation, aligned with the prepared data ",
+             "(situations sorted by id).", call. = FALSE)
+      }
+      if (anyNA(cluster)) {
+        stop("`cluster` contains missing values.", call. = FALSE)
+      }
+      crossprod(rowsum(w * S, group = as.character(cluster)))
+    },
+    stop("Unknown meat type: '", type, "'.")
+  )
+}
+
+#' Resolve a user-supplied post-hoc cluster vector to prepared order
+#'
+#' Guards the alignment hazards of \code{vcov(fit, type = "cluster",
+#' cluster = )}, where the supplied labels must line up with the prepared
+#' (id-sorted) choice situations:
+#' \itemize{
+#'   \item A row-level vector (length \code{sum(M)}) is rejected outright — the
+#'     most common mistake is passing raw per-alternative labels.
+#'   \item A \emph{named} vector is realigned to the prepared order by matching
+#'     its names against the stored choice-situation ids, so it is safe
+#'     regardless of the order the user built it in. This is the recommended
+#'     post-hoc form.
+#'   \item An \emph{unnamed} vector of length \code{N} is taken to be in
+#'     prepared order, with a warning flagging that assumption.
+#' }
+#' The fit-time \code{cluster_col=} path never reaches here: its labels are
+#' collapsed and stored already aligned.
+#'
+#' @param object A fitted \code{choicer_fit} with stored data.
+#' @param cluster User-supplied cluster labels (named or unnamed).
+#' @returns A length-\code{N} vector aligned with the prepared choice
+#'   situations.
+#' @noRd
+.resolve_cluster <- function(object, cluster) {
+  d <- object[["data"]]
+  N <- length(d$M)
+  n_rows <- nrow(d$X)
+
+  # Most common mistake: per-alternative (row-level) labels.
+  if (n_rows != N && length(cluster) == n_rows) {
+    stop("`cluster` has length ", n_rows, ", the number of stacked ",
+         "alternative rows, but cluster-robust standard errors need one ",
+         "label per choice situation (N = ", N, "). Collapse to one label ",
+         "per choice situation, or set `cluster_col=` at fit time.",
+         call. = FALSE)
+  }
+
+  nm <- names(cluster)
+  ids <- d$situation_ids
+
+  if (!is.null(nm)) {
+    if (is.null(ids)) {
+      stop("Cannot realign a named `cluster`: this fit does not carry ",
+           "choice-situation ids (it predates id storage). Supply `cluster` ",
+           "in the prepared, id-sorted order (unnamed), or set `cluster_col=` ",
+           "at fit time.", call. = FALSE)
+    }
+    if (anyDuplicated(nm)) {
+      stop("`cluster` has duplicate names; names must be the unique ",
+           "choice-situation ids.", call. = FALSE)
+    }
+    idx <- match(as.character(ids), nm)
+    if (anyNA(idx)) {
+      miss <- as.character(ids)[is.na(idx)]
+      stop("`cluster` names do not cover every choice situation (",
+           length(miss), " of ", N, " missing, e.g. ",
+           paste(utils::head(miss, 3L), collapse = ", "),
+           "). Name `cluster` by choice-situation id.", call. = FALSE)
+    }
+    return(unname(cluster[idx]))
+  }
+
+  # Unnamed: must already be in prepared (id-sorted) order.
+  if (length(cluster) != N) {
+    stop("`cluster` has length ", length(cluster), " but the model has ", N,
+         " choice situations. Supply one label per choice situation, name it ",
+         "by choice-situation id, or set `cluster_col=` at fit time.",
+         call. = FALSE)
+  }
+  warning("Unnamed `cluster` is assumed to be in the prepared (id-sorted) ",
+          "order. Name it by choice-situation id (see `fit$data$situation_ids`) ",
+          "or set `cluster_col=` at fit time to guarantee alignment.",
+          call. = FALSE)
+  cluster
+}
+
+#' Score-based variance assembly (bhhh / robust / cluster) from stored data
+#'
+#' The single post-hoc entry point behind \code{vcov(fit, type = )},
+#' \code{ensure_vcov()} (for \code{se_method = "cluster"} fits) and
+#' \code{compute_sandwich_vcov()}. Operates entirely in natural space: the
+#' stored data and coefficients are natural-scale even when the fit used
+#' \code{scale_vars}, so no back-transform is needed.
+#'
+#' @param object A fitted \code{choicer_fit} (MNL / MXL / NL) with
+#'   \code{keep_data = TRUE}.
+#' @param type One of \code{"hessian"}, \code{"bhhh"}, \code{"robust"},
+#'   \code{"cluster"}.
+#' @param cluster Cluster labels for \code{type = "cluster"}; defaults to the
+#'   labels stored at fit time via \code{cluster_col}.
+#' @returns List with \code{vcov} and \code{se}.
+#' @noRd
+.assemble_score_vcov <- function(object, type, cluster = NULL) {
+  if (is.null(object[["data"]])) {
+    stop("Cannot compute standard errors: no data stored. ",
+         "Refit with keep_data = TRUE.")
+  }
+  if (!object$model %in% c("mnl", "mxl", "nl")) {
+    stop("Score-based standard errors are implemented for multinomial (MNL), ",
+         "mixed (MXL) and nested (NL) logit only.")
+  }
+
+  if (identical(type, "hessian")) {
+    return(invert_hessian(.compute_bread(object)))
+  }
+
+  w <- object[["data"]]$weights
+  S <- compute_scores(object)
+
+  if (identical(type, "bhhh")) {
+    return(invert_hessian(.score_meat(S, w, "bhhh")))
+  }
+
+  if (identical(type, "cluster")) {
+    if (is.null(cluster)) {
+      # No explicit labels: use the fit-time cluster_col vector, already
+      # collapsed and aligned to the prepared order.
+      cluster <- object[["data"]]$cluster
+      if (is.null(cluster)) {
+        stop("Cluster-robust standard errors need cluster labels: pass ",
+             "`cluster=` (named by choice-situation id) or fit with ",
+             "`cluster_col=`.", call. = FALSE)
+      }
+    } else {
+      # User-supplied labels: guard and realign to the prepared order.
+      cluster <- .resolve_cluster(object, cluster)
+    }
+  }
+  B <- .score_meat(S, w, type, cluster)
+  .sandwich_combine(.compute_bread(object), B)
 }

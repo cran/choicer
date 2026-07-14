@@ -4,10 +4,29 @@
 \alias{vcov.choicer_fit}
 \title{Extract variance-covariance matrix from a choicer_fit object}
 \usage{
-\method{vcov}{choicer_fit}(object, ...)
+\method{vcov}{choicer_fit}(object, type = NULL, cluster = NULL, ...)
 }
 \arguments{
 \item{object}{A choicer_fit object.}
+
+\item{type}{\code{NULL} (default; return the as-fitted vcov) or one of
+\code{"hessian"}, \code{"bhhh"}, \code{"robust"}, \code{"cluster"}.}
+
+\item{cluster}{Cluster labels for \code{type = "cluster"}, one per choice
+situation. Alignment to the prepared (id-sorted) choice situations is
+handled as follows:
+\itemize{
+\item \strong{Named} (recommended): names are matched against the
+choice-situation ids, so the vector is safe in any order. Build it by
+naming your per-situation labels with the id values.
+\item \strong{Unnamed}: taken to be in the prepared, id-sorted order; a
+warning flags that assumption. A vector of per-alternative (row-level)
+length is rejected.
+}
+Defaults to the labels stored at fit time via \code{cluster_col} (already
+aligned). Supplying \code{cluster} without \code{type} implies
+\code{type = "cluster"}. The safest route is to pass \code{cluster_col=}
+at fit time, which sidesteps post-hoc alignment entirely.}
 
 \item{...}{Additional arguments (ignored).}
 }
@@ -15,7 +34,35 @@
 Named variance-covariance matrix, or NULL if unavailable.
 }
 \description{
-Triggers lazy Hessian computation if vcov has not been computed yet.
+With no arguments, returns the variance-covariance matrix implied by the
+fit's own \code{se_method} (triggering lazy computation if needed). Passing
+\code{type} recomputes a different variance estimator post hoc from the
+stored data — no refit needed (requires \code{keep_data = TRUE}):
+\describe{
+\item{\code{"hessian"}}{Inverse of the analytical negated Hessian.}
+\item{\code{"bhhh"}}{Inverse of the BHHH/OPG information
+\eqn{\sum_i w_i s_i s_i'}.}
+\item{\code{"robust"}}{Huber-White sandwich
+\eqn{A^{-1} (\sum_i w_i^2 s_i s_i') A^{-1}} — also the valid WESML
+variance under choice-based weighting.}
+\item{\code{"cluster"}}{Cluster-robust sandwich
+\eqn{A^{-1} (\sum_g g_g g_g') A^{-1}} with
+\eqn{g_g = \sum_{i \in g} w_i s_i} the within-cluster sum of weighted
+scores. Requires \code{cluster} (or a fit made with
+\code{cluster_col}). No small-sample correction is applied.}
+}
+Here \eqn{i} indexes \emph{choice situations}. For repeated choices by the
+same decision maker (panel data), cluster on the decision maker.
+}
+\details{
+Note (mixed logit): clustering repairs the \emph{inference}, not the
+\emph{estimand}. \code{run_mxlogit()} treats each choice situation as an
+independent draw from the mixing distribution (a cross-sectional MSL
+likelihood, not the panel product form), so on panel data the point
+estimates target that cross-sectional model; \code{type = "cluster"} makes
+their standard errors robust to within-person dependence but does not turn
+the fit into a panel mixed logit. For panel random coefficients use
+\code{\link{run_hmnlogit}} (\code{person_col}).
 }
 \examples{
 \donttest{
@@ -24,9 +71,14 @@ set.seed(42)
 N <- 50; J <- 3
 dt <- data.table(id = rep(1:N, each = J), alt = rep(1:J, N))
 dt[, `:=`(x1 = rnorm(.N), x2 = rnorm(.N))]
+dt[, person := rep(1:10, each = 5)[id]]
 dt[, choice := 0L]
 dt[, choice := sample(c(1L, rep(0L, J - 1))), by = id]
 fit <- run_mnlogit(dt, "id", "alt", "choice", c("x1", "x2"))
-vcov(fit)
+vcov(fit)                          # as fitted (hessian)
+vcov(fit, type = "robust")         # Huber-White, post hoc
+# named by situation id -> safe regardless of order
+cl <- dt[, person[1L], by = id]
+vcov(fit, type = "cluster", cluster = setNames(cl$V1, cl$id))
 }
 }

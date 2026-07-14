@@ -1,0 +1,170 @@
+---
+title: "Bayesian multinomial probit"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Bayesian multinomial probit}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 6.5, fig.height = 4)
+options(digits = 4)
+```
+
+The multinomial probit (MNP) replaces logit's Type-I extreme-value error
+structure with a multivariate-normal covariance for utility differences. That
+covariance can encode correlated substitution across alternatives. The cost is
+scale normalization, a covariance parameterization that grows quickly with the
+number of alternatives, and MCMC diagnostics. choicer estimates the model the
+Bayesian way: a Gibbs sampler with data augmentation, written in C++ with a
+reproducible, thread-safe random number generator.
+
+```{r setup}
+library(choicer)
+set_num_threads(2)
+```
+
+## Simulate from a probit process
+
+`simulate_mnp_data()` draws choices with correlated normal errors and known
+parameters.
+
+```{r sim}
+sim <- simulate_mnp_data(N = 2000, J = 3, seed = 1)
+sim
+```
+
+## Run the sampler
+
+`run_mnprobit()` returns posterior draws. The settings below keep this vignette
+quick; for real work use a longer run, repeat the fit with several independent
+seeds when needed, and inspect trace, autocorrelation, ESS and Monte Carlo error
+before interpreting posterior summaries. `run_mnprobit()` does not currently
+expose user-specified starts or a multi-chain wrapper.
+
+```{r fit}
+set.seed(3)
+fit <- run_mnprobit(
+  data           = sim$data,
+  id_col         = "id",
+  alt_col        = "alt",
+  choice_col     = "choice",
+  covariate_cols = c("x1", "x2"),
+  mcmc           = list(R = 4000, burn = 1000, thin = 2)
+)
+summary(fit)
+```
+
+The `Sigma` entries are the error-covariance parameters. They are identified only
+up to scale, so choicer reports them on the normalized scale where
+`Sigma_11 = 1`. The prior is placed on the unrestricted covariance used inside
+the Gibbs sampler; the reported posterior summaries are computed after
+normalizing each kept draw.
+
+For empirical work, ask what disciplines the covariance before interpreting
+it. Keane (1992) shows that when covariates do not vary across alternatives —
+demographics, or constants alone — the covariance parameters are identified by
+the normal functional form only, and estimation is fragile. Alternative-specific
+covariate variation (prices, distances, or attributes that differ across the
+options within a choice situation), and especially defensible exclusions across
+utility equations, is what separates covariance from systematic utility in
+practice; the simulated data above contain two varying attributes. The Bayesian
+machinery
+does not repeal this: with weak alternative-specific variation the $\Sigma$
+posterior sits close to its prior, and the substitution pattern it implies is
+maintained rather than estimated. The MNP is attractive when flexible error
+correlation is the central object, but with many alternatives its parameter
+count rises quickly.
+
+## Compare posterior summaries with the truth
+
+```{r recovery}
+recovery_table(fit, sim$true_params)
+```
+
+In this simulated example the posterior summaries line up with the parameters
+that generated the data. As with the frequentist recovery vignettes, this is an
+illustration rather than a proof: what matters in repeated use is posterior
+coverage, mixing, and sensitivity to prior and normalization choices.
+
+## A quick MCMC diagnostic
+
+Posterior draws are stored on the fit, so the usual diagnostics are a line away.
+A trace plot of the price coefficient should look like a stationary "fuzzy
+caterpillar":
+
+```{r trace}
+beta_draws <- fit$draws$beta
+plot(beta_draws[, "x2"], type = "l", col = "steelblue",
+     xlab = "iteration", ylab = expression(beta[x2]),
+     main = "Posterior trace: price coefficient")
+abline(h = sim$true_params$beta[2], col = "red", lwd = 2)
+```
+
+The red line marks the true value; the chain should hover around it. The same
+diagnostics used for the hierarchical models apply to any draws matrix:
+`rhat()` computes the split R-hat (values near 1 are consistent with
+convergence) and `ess()` the rank-normalized bulk and tail effective sample
+sizes — the number of effectively independent draws behind each posterior
+summary:
+
+```{r rhat}
+rhat(fit$draws$beta)
+ess(fit$draws$beta)
+mcse(fit$draws$beta)
+```
+
+On a single chain these are necessary rather than sufficient checks; the
+stronger practical check in the current API is to repeat the complete fit with
+several independent seeds, then compare posterior summaries and pass equal-length
+draw matrices as a list to the same diagnostic functions, for example
+`rhat(list(fit$draws$beta, fit_seed_2$draws$beta), rank = TRUE)`. Because the
+sampler's
+initial state is internal rather than user-controlled, this is not equivalent
+to deliberately overdispersed starting values. Longer runs, posterior stability
+across seeds, and prior sensitivity should therefore be reported together.
+
+## What this fit does not provide
+
+`choicer_mnp` is a posterior-draws object, not a `choicer_fit`. It provides
+coefficient and covariance summaries, recovery tools, and access to the raw and
+identified draws. It does **not** currently implement `predict()`, elasticities,
+diversion ratios, logsum welfare, `logLik()`, AIC, or BIC. General MNP
+counterfactual prediction requires multivariate-normal probability evaluation
+and an explicit rule for transporting the covariance structure to a new choice
+set; choicer does not silently impose either.
+
+For a reportable MNP application, document the base alternative and per-draw
+scale normalization, the prior on the raw covariance and its implications after
+normalization, the alternative-specific variation that identifies covariance,
+trace/ESS/MCSE evidence, stability across independent seeds, and sensitivity to
+the prior and base alternative. Covariance conclusions are often the first to
+move when the identifying variation is weak.
+
+The full derivations — the data-augmented Gibbs sampler, the McCulloch-Rossi
+normalization, and the identification discussion — are in the
+[math companion](https://fpcordeiro.github.io/choicer/articles/bayesian_multinomial_probit_math.html). For a faster,
+frequentist alternative with the same post-estimation toolkit, see the
+[multinomial logit](mnl.html) and [mixed logit](mxl.html) vignettes. For the
+hierarchical extension — respondent-level random tastes and partially-pooled
+alternative effects, in both logit and probit flavors — see the
+[hierarchical Bayes vignette](hb.html).
+
+## References
+
+Albert, J. H. and Chib, S. (1993). Bayesian analysis of binary and
+polychotomous response data. *Journal of the American Statistical
+Association*, 88(422), 669-679.
+
+Keane, M. P. (1992). A note on identification in the multinomial probit
+model. *Journal of Business & Economic Statistics*, 10(2), 193-200.
+
+McCulloch, R. and Rossi, P. E. (1994). An exact likelihood analysis of the
+multinomial probit model. *Journal of Econometrics*, 64(1-2), 207-240.
+
+Rossi, P. E., Allenby, G. M. and McCulloch, R. (2005). *Bayesian Statistics
+and Marketing*. Wiley.
+
+Train, K. E. (2009). *Discrete Choice Methods with Simulation* (2nd ed.).
+Cambridge University Press, Chapter 5.

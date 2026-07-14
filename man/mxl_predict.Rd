@@ -15,7 +15,10 @@ mxl_predict(
   rc_correlation = TRUE,
   rc_mean = FALSE,
   use_asc = TRUE,
-  include_outside_option = FALSE
+  include_outside_option = FALSE,
+  gen_seed = -1L,
+  gen_scramble = 1L,
+  gen_S = 0L
 )
 }
 \arguments{
@@ -40,6 +43,15 @@ mxl_predict(
 \item{use_asc}{whether ASCs are included}
 
 \item{include_outside_option}{whether the outside option is present}
+
+\item{gen_seed}{Integer master seed for the on-the-fly Halton generator. \code{< 0}
+(default) uses the materialized \code{eta_draws} cube; \code{>= 0} generates draws
+on the fly from this seed.}
+
+\item{gen_scramble}{Integer scramble mode for on-the-fly generation: \code{0} =
+identity permutations (plain Halton, compat), \code{1} = seeded position-wise digit permutations.}
+
+\item{gen_S}{Integer number of draws per individual, used only when \code{gen_seed >= 0}.}
 }
 \value{
 List with \code{choice_prob} (length sum(M)), \code{utility} (length sum(M),
@@ -50,3 +62,4 @@ simulated mean of the deterministic + W*gamma component), and, when
 Returns the simulated choice probability for each (individual, alternative)
 row of \code{X}, averaged over the supplied Halton draws. Mirrors \code{mnl_predict}.
 }
+\keyword{internal}

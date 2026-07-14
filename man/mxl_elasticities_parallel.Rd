@@ -19,7 +19,10 @@ mxl_elasticities_parallel(
   rc_correlation = TRUE,
   rc_mean = FALSE,
   use_asc = TRUE,
-  include_outside_option = FALSE
+  include_outside_option = FALSE,
+  gen_seed = -1L,
+  gen_scramble = 1L,
+  gen_S = 0L
 )
 }
 \arguments{
@@ -52,6 +55,15 @@ mxl_elasticities_parallel(
 \item{use_asc}{whether ASCs are included}
 
 \item{include_outside_option}{whether outside option is included}
+
+\item{gen_seed}{Integer master seed for the on-the-fly Halton generator. \code{< 0}
+(default) uses the materialized \code{eta_draws} cube; \code{>= 0} generates draws
+on the fly from this seed.}
+
+\item{gen_scramble}{Integer scramble mode for on-the-fly generation: \code{0} =
+identity permutations (plain Halton, compat), \code{1} = seeded position-wise digit permutations.}
+
+\item{gen_S}{Integer number of draws per individual, used only when \code{gen_seed >= 0}.}
 }
 \value{
 J x J matrix of aggregate elasticities
@@ -74,10 +86,11 @@ dt[, choice := sample(c(1L, rep(0L, J - 1))), by = id]
 d <- prepare_mxl_data(dt, "id", "alt", "choice", "x1", "w1")
 eta <- get_halton_normals(50, d$N, ncol(d$W))
 fit <- run_mxlogit(input_data = d, eta_draws = eta)
-elas <- mxl_elasticities_parallel(coef(fit), d$X, d$W, d$alt_idx,
+elas <- choicer:::mxl_elasticities_parallel(coef(fit), d$X, d$W, d$alt_idx,
   d$choice_idx, d$M, d$weights, eta, rc_dist = rep(0L, ncol(d$W)),
   elast_var_idx = 1L, is_random_coef = FALSE,
   rc_correlation = FALSE, rc_mean = FALSE)
 elas
 }
 }
+\keyword{internal}

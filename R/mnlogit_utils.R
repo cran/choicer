@@ -27,12 +27,39 @@
 #'   argument is forwarded; otherwise it is silently ignored.
 #' @param control List of optimizer-specific control parameters passed to the
 #'   chosen optimizer (e.g., \code{list(maxeval = 2000)} for nloptr).
-#' @param weights Optional vector of weights for each choice situation. If \code{NULL}, equal weights are used.
+#' @param scale_vars Pre-estimation column scaling for the design matrix. One of
+#'   \code{"none"} (default), \code{"sd"} (sample standard deviation),
+#'   \code{"mad"} (\code{stats::mad}), or \code{"iqr"}
+#'   (\code{stats::IQR(x) / 1.349}). When not \code{"none"}, every column of
+#'   \code{X} is divided by the chosen scale before optimization to improve
+#'   Hessian conditioning. Coefficients and standard errors are back-transformed
+#'   to the user's natural units via the delta method, so reported quantities
+#'   are invariant to this choice.
+#' @param weights Optional vector of weights for each choice situation. If \code{NULL}, equal weights are used. All weights must be finite and strictly positive.
+#' @param weights_col Optional name of a column in \code{data} holding per-row
+#'   weights (convenience workflow only). The column must be constant within each
+#'   \code{id_col} (one weight per choice situation) and is collapsed accordingly.
+#'   Mutually exclusive with \code{weights}. All weights must be finite and strictly
+#'   positive. Used for choice-based / WESML
+#'   weighting; pair with \code{se_method = "sandwich"} for valid inference.
 #' @param outside_opt_label Label for the outside option (if any). If \code{NULL}, no outside option is assumed.
 #' @param include_outside_option Logical indicating whether to include an outside option in the model.
 #' @param use_asc Logical indicating whether to include alternative-specific constants (ASCs) in the model.
 #' @param keep_data Logical. If \code{TRUE} (default), stores prepared data in the
 #'   returned object for \code{predict()} and post-estimation functions.
+#' @param se_method Method for computing standard errors: \code{"hessian"}
+#'   (default, analytical Hessian), \code{"bhhh"} (outer product of gradients),
+#'   \code{"sandwich"} (robust Huber--White / WESML variance
+#'   \eqn{A^{-1} B A^{-1}}), or \code{"cluster"} (cluster-robust sandwich;
+#'   requires \code{cluster_col} or a prepared \code{input_data} with a
+#'   \code{cluster} field). Use \code{"sandwich"} under choice-based / WESML
+#'   weighting. Any of these can also be recomputed post hoc via
+#'   \code{vcov(fit, type = )}.
+#' @param cluster_col Optional name of a column in \code{data} holding cluster
+#'   labels for cluster-robust standard errors (e.g. a person id when the same
+#'   decision maker contributes several choice situations). Must be constant
+#'   within each \code{id_col}. Supplying \code{cluster_col} without an explicit
+#'   \code{se_method} selects \code{se_method = "cluster"}.
 #' @param nloptr_opts Deprecated. Use \code{optimizer} and \code{control} instead.
 #' @returns A \code{choicer_mnl} object (inherits from \code{choicer_fit}).
 #'   Standard S3 methods available: \code{summary()}, \code{coef()}, \code{vcov()},
@@ -66,13 +93,18 @@ run_mnlogit <- function(
     optimizer = NULL,
     control = list(),
     weights = NULL,
+    weights_col = NULL,
     outside_opt_label = NULL,
     include_outside_option = FALSE,
     use_asc = TRUE,
     keep_data = TRUE,
+    scale_vars = c("none", "sd", "mad", "iqr"),
+    se_method = c("hessian", "bhhh", "sandwich", "cluster"),
+    cluster_col = NULL,
     nloptr_opts = NULL
 ) {
   cl <- match.call()
+  se_method_default <- missing(se_method)
 
   # Backward compatibility: nloptr_opts -> optimizer + control
   if (!is.null(nloptr_opts)) {
@@ -81,15 +113,30 @@ run_mnlogit <- function(
     control <- nloptr_opts
   }
 
+  scale_vars <- match.arg(scale_vars)
+  se_method <- match.arg(se_method)
+  if (!is.null(cluster_col) && se_method_default) se_method <- "cluster"
+
   # --- Resolve input pathway --------------------------------------------------
   has_data <- !is.null(data)
   has_input <- !is.null(input_data)
+  cs_meta <- if (has_data) attr(data, "choice_sampling") else attr(input_data, "choice_sampling")
 
   if (has_data && has_input) {
     stop("Supply either 'data' (convenience) or 'input_data' (advanced), not both.")
   }
   if (!has_data && !has_input) {
     stop("Supply either 'data' (convenience) or 'input_data' (advanced).")
+  }
+  if (has_input && !is.null(weights_col)) {
+    stop("`weights_col` is only supported in the convenience (data) workflow. ",
+         "Bake weights into `input_data` via prepare_mnl_data(weights_col = ) ",
+         "or supply `weights` to prepare_mnl_data().")
+  }
+  if (has_input && !is.null(cluster_col)) {
+    stop("`cluster_col` is only supported in the convenience (data) workflow. ",
+         "Bake cluster labels into `input_data` via ",
+         "prepare_mnl_data(cluster_col = ).")
   }
 
   if (has_data) {
@@ -99,15 +146,39 @@ run_mnlogit <- function(
       stop("Convenience workflow requires: id_col, alt_col, choice_col, ",
            "and covariate_cols.")
     }
+    # WESML provenance present but no weights supplied: auto-adopt the recorded
+    # weight column, or error -- never silently fit unweighted under a WESML label.
+    if (!is.null(cs_meta) && is.null(weights) && is.null(weights_col)) {
+      wn <- cs_meta$weight_name
+      if (!is.null(wn) && wn %in% names(data)) {
+        weights_col <- wn
+        message("Detected WESML choice-based-sampling provenance; applying attached ",
+                "weights from column '", wn, "'.")
+      } else {
+        stop("Data carries WESML choice-based-sampling provenance but no weights were ",
+             "supplied, and the recorded weight column (",
+             if (is.null(wn)) "unknown" else paste0("'", wn, "'"),
+             ") is not present in `data`. Pass `weights_col=` or `weights=` explicitly.",
+             call. = FALSE)
+      }
+    }
     input_list <- prepare_mnl_data(
       data, id_col, alt_col, choice_col, covariate_cols,
       weights = weights,
+      weights_col = weights_col,
       outside_opt_label = outside_opt_label,
-      include_outside_option = include_outside_option
+      include_outside_option = include_outside_option,
+      cluster_col = cluster_col
     )
   } else {
     # Advanced workflow: use input_data directly
     input_list <- input_data
+  }
+
+  if (se_method == "cluster" && is.null(input_list$cluster)) {
+    stop("se_method = \"cluster\" needs cluster labels: pass `cluster_col=` ",
+         "(convenience workflow) or prepare `input_data` with ",
+         "prepare_mnl_data(cluster_col = ).", call. = FALSE)
   }
 
   # Resolve alt_col for parameter naming (needed by both workflows)
@@ -119,6 +190,33 @@ run_mnlogit <- function(
   n_asc <- if (use_asc) J - 1 else 0
   n_params <- K_x + n_asc
   theta_init <- rep(0, n_params)
+
+  # Parameter names and index map (built early so the scaling layer can address
+  # blocks and so theta_hat/vcov/se can be named downstream).
+  asc_names <- if (use_asc) {
+    paste0("ASC_", input_list$alt_mapping[2:J][[alt_col]])
+  } else {
+    character(0)
+  }
+  param_names <- c(colnames(input_list$X), asc_names)
+  param_map <- list(beta = seq_len(K_x))
+  if (n_asc > 0) param_map$asc <- K_x + seq_len(n_asc)
+
+  # --- Variable scaling (optional) --------------------------------------------
+  # Scale columns of X by their sample SD (or robust SD-equivalent) to improve
+  # Hessian conditioning. Keep the natural-scale matrix for storage; theta_hat
+  # and vcov are back-transformed after optimization. The back-transform is
+  # purely multiplicative (1/sX on the beta block, identity on ASCs).
+  natural_X <- input_list$X
+  sX <- rep(1, K_x); names(sX) <- colnames(input_list$X)
+  bt_mult <- rep(1, n_params)
+  bt_shift <- rep(0, n_params)
+  if (scale_vars != "none" && K_x > 0) {
+    sX <- .column_scales(input_list$X, scale_vars)
+    .assert_scales_ok(sX, scale_vars, "fixed-coefficient")
+    input_list$X <- sweep(input_list$X, 2, sX, "/")
+    bt_mult[param_map$beta] <- 1 / sX
+  }
 
   # Build eval_f closure (captures data in environment)
   eval_f <- function(theta) {
@@ -146,35 +244,107 @@ run_mnlogit <- function(
 
   message("Optimization run time ", convertTime(elapsed))
 
-  # Parameter names and index map
   theta_hat <- opt$par
-  asc_names <- if (use_asc) {
-    paste0("ASC_", input_list$alt_mapping[2:J][[alt_col]])
-  } else {
-    character(0)
-  }
-  param_names <- c(colnames(input_list$X), asc_names)
   names(theta_hat) <- param_names
 
-  param_map <- list(beta = seq_len(K_x))
-  if (n_asc > 0) param_map$asc <- K_x + seq_len(n_asc)
+  # Choice-based-sampling provenance and a guardrail for weighted inference.
+  weights_nonuniform <- length(unique(input_list$weights)) > 1
+  if (weights_nonuniform && se_method == "bhhh") {
+    warning("Non-uniform weights detected with se_method = 'bhhh': BHHH/OPG ",
+            "standard errors use the w^1 meat (sum w_i s_i s_i')^{-1}, which is ",
+            "NOT a valid choice-based-sampling (WESML) correction; the correct ",
+            "sandwich meat is w^2. Use se_method = 'sandwich' for valid WESML ",
+            "inference.",
+            call. = FALSE)
+  } else if (weights_nonuniform && !se_method %in% c("sandwich", "cluster")) {
+    warning("Non-uniform weights detected. If these are sampling/WESML ",
+            "weights, use se_method = 'sandwich' for valid inference.",
+            call. = FALSE)
+  }
+  choice_sampling <- if (!is.null(cs_meta)) {
+    utils::modifyList(as.list(cs_meta),
+                      list(se_method = se_method, weights_applied = weights_nonuniform))
+  } else if (weights_nonuniform) {
+    list(scheme = "user", se_method = se_method, weights_applied = TRUE)
+  } else {
+    NULL
+  }
+  if (!is.null(cs_meta) && !weights_nonuniform) {
+    if (has_input) {
+      stop("`input_data` is flagged as a WESML choice-based sample (it carries ",
+           "`choice_sampling` provenance), but the resolved weights are uniform. ",
+           "Fitting would produce an invalid unweighted estimator mislabeled as ",
+           "WESML. To proceed, either bake the non-uniform WESML weights into ",
+           "`input_data` via prepare_mnl_data(weights = ) / prepare_mnl_data(weights_col = ), ",
+           "or, if you deliberately want an unweighted fit, strip the provenance with ",
+           "`attr(input_data, \"choice_sampling\") <- NULL`.",
+           call. = FALSE)
+    }
+    warning("WESML provenance is present but the applied weights are uniform; the fit ",
+            "is effectively unweighted and is NOT a WESML-corrected estimator.",
+            call. = FALSE)
+  }
 
-  # Compute vcov eagerly
-  hess <- mnl_loglik_hessian_parallel(
-    theta = theta_hat,
-    X = input_list$X,
-    alt_idx = input_list$alt_idx,
-    choice_idx = input_list$choice_idx,
-    M = input_list$M,
-    weights = input_list$weights,
-    use_asc = use_asc,
-    include_outside_option = input_list$include_outside_option
-  )
-  vcov_result <- invert_hessian(hess)
+  # Compute vcov eagerly using the selected SE method. For "sandwich"
+  # (robust / WESML) errors, form V = A^{-1} B A^{-1} with bread A = weighted
+  # negated Hessian and meat B = weight-squared OPG (pass weights^2 to the
+  # weight-free BHHH routine). For "cluster", the meat is the outer product of
+  # within-cluster sums of weighted scores. Computed in scaled space;
+  # back-transform applies.
+  if (se_method %in% c("sandwich", "cluster")) {
+    A_bread <- mnl_loglik_hessian_parallel(
+      theta = theta_hat, X = input_list$X, alt_idx = input_list$alt_idx,
+      choice_idx = input_list$choice_idx, M = input_list$M,
+      weights = input_list$weights, use_asc = use_asc,
+      include_outside_option = input_list$include_outside_option
+    )
+    B_meat <- if (se_method == "sandwich") {
+      mnl_bhhh_parallel(
+        theta = theta_hat, X = input_list$X, alt_idx = input_list$alt_idx,
+        choice_idx = input_list$choice_idx, M = input_list$M,
+        weights = input_list$weights^2, use_asc = use_asc,
+        include_outside_option = input_list$include_outside_option
+      )
+    } else {
+      S_scores <- mnl_scores_parallel(
+        theta = theta_hat, X = input_list$X, alt_idx = input_list$alt_idx,
+        choice_idx = input_list$choice_idx, M = input_list$M,
+        use_asc = use_asc,
+        include_outside_option = input_list$include_outside_option
+      )
+      .score_meat(S_scores, input_list$weights, "cluster", input_list$cluster)
+    }
+    vcov_result <- .sandwich_combine(A_bread, B_meat)
+  } else {
+    hess <- switch(
+      se_method,
+      hessian = mnl_loglik_hessian_parallel(
+        theta = theta_hat, X = input_list$X, alt_idx = input_list$alt_idx,
+        choice_idx = input_list$choice_idx, M = input_list$M,
+        weights = input_list$weights, use_asc = use_asc,
+        include_outside_option = input_list$include_outside_option
+      ),
+      bhhh = mnl_bhhh_parallel(
+        theta = theta_hat, X = input_list$X, alt_idx = input_list$alt_idx,
+        choice_idx = input_list$choice_idx, M = input_list$M,
+        weights = input_list$weights, use_asc = use_asc,
+        include_outside_option = input_list$include_outside_option
+      )
+    )
+    vcov_result <- invert_hessian(hess)
+  }
   if (!is.null(vcov_result$vcov)) {
     rownames(vcov_result$vcov) <- param_names
     colnames(vcov_result$vcov) <- param_names
     names(vcov_result$se) <- param_names
+  }
+
+  # --- Back-transform to natural scale ----------------------------------------
+  if (scale_vars != "none") {
+    bt <- .backtransform_estimates(theta_hat, vcov_result, bt_mult, bt_shift, param_names)
+    theta_hat <- bt$theta
+    vcov_result <- bt$vcov_result
+    input_list$X <- natural_X
   }
 
   # Build S3 object
@@ -211,13 +381,19 @@ run_mnlogit <- function(
         alt_idx = input_list$alt_idx,
         choice_idx = input_list$choice_idx,
         M = input_list$M,
-        weights = input_list$weights
+        weights = input_list$weights,
+        cluster = input_list$cluster,
+        situation_ids = input_list$situation_ids
       )
-    }
+    },
+    scale_vars = scale_vars,
+    sX = sX,
+    se_method = se_method,
+    choice_sampling = choice_sampling
   )
 }
 
-#' Prepare inputs for `mnl_loglik_gradient_parallel()`
+#' Prepare inputs for multinomial logit estimation
 #'
 #' Prepares and validates inputs for multinomial logit estimation routine.
 #'
@@ -226,9 +402,18 @@ run_mnlogit <- function(
 #' @param alt_col Name of the column identifying alternatives.
 #' @param choice_col Name of the column indicating chosen alternative (1 = chosen, 0 = not chosen).
 #' @param covariate_cols Vector of names of columns to be used as covariates.
-#' @param weights Optional vector of weights for each choice situation. If `NULL`, equal weights are used.
+#' @param weights Optional vector of weights for each choice situation. If `NULL`, equal weights are used. All weights must be finite and strictly positive.
+#' @param weights_col Optional name of a column in `data` holding per-row
+#'   weights. The column must be constant within each `id_col` (one weight per
+#'   choice situation) and is collapsed accordingly. Mutually exclusive with
+#'   `weights`. All weights must be finite and strictly positive.
 #' @param outside_opt_label Label for the outside option (if any). If `NULL`, no outside option is assumed.
 #' @param include_outside_option Logical indicating whether to include an outside option in the model.
+#' @param cluster_col Optional name of a column in `data` holding cluster labels
+#'   for cluster-robust standard errors (e.g. a person id when the same decision
+#'   maker contributes several choice situations). Must be constant within each
+#'   `id_col`. Collapsed to one label per choice situation and returned as
+#'   `cluster`; used by `se_method = "cluster"` and `vcov(fit, type = "cluster")`.
 #' @returns A list containing:
 #'   \itemize{
 #'     \item `X`: Design matrix (sum(M) x K).
@@ -237,6 +422,8 @@ run_mnlogit <- function(
 #'     \item `M`: Integer vector with number of alternatives per choice situation.
 #'     \item `N`: Number of choice situations.
 #'     \item `weights`: Vector of weights.
+#'     \item `cluster`: Vector of cluster labels (or `NULL`).
+#'     \item `situation_ids`: Choice-situation ids in prepared (sorted) order.
 #'     \item `include_outside_option`: Logical flag.
 #'     \item `alt_mapping`: Data.table mapping alternatives to summary statistics.
 #'     \item `dropped_cols`: Names of columns dropped due to collinearity, if any.
@@ -261,13 +448,23 @@ prepare_mnl_data <- function(
     covariate_cols,
     weights = NULL,
     outside_opt_label = NULL,
-    include_outside_option = FALSE
+    include_outside_option = FALSE,
+    weights_col = NULL,
+    cluster_col = NULL
 ) {
   ## Preliminary housekeeping --------------------------------------------------
+  # Capture any choice-based-sampling provenance before column drops / coercion,
+  # so it can be carried onto the returned object for the advanced pathway.
+  cs_provenance <- attr(data, "choice_sampling")
   dt <- data.table::as.data.table(data)[]
 
   # Check if all relevant variables are available
   needed <- c(id_col, alt_col, choice_col, covariate_cols)
+  if (!is.null(weights) && !is.null(weights_col)) {
+    stop("Supply only one of `weights` or `weights_col`.")
+  }
+  if (!is.null(weights_col)) needed <- c(needed, weights_col)
+  if (!is.null(cluster_col)) needed <- c(needed, cluster_col)
   if (!all(needed %in% names(dt)))
     stop("Missing columns: ",
          paste(setdiff(needed, names(dt)), collapse = ", "))
@@ -356,6 +553,30 @@ prepare_mnl_data <- function(
   ids <- dt[, get(id_col)][!duplicated(dt[[id_col]])]  # vector of ids in *current* order
   N   <- length(ids)
 
+  ## Collapse a row-level weight column to one weight per choice situation.
+  ## Done AFTER ordering/filtering so alignment is by id, never by position.
+  if (!is.null(weights_col)) {
+    if (!is.numeric(dt[[weights_col]])) {
+      stop("`", weights_col, "` must be numeric.")
+    }
+    nuniq <- dt[, data.table::uniqueN(get(weights_col)), by = id_col][["V1"]]
+    if (any(nuniq != 1L)) {
+      stop("`", weights_col, "` must be constant within each '", id_col,
+           "' (one weight per choice situation).")
+    }
+    wmap <- dt[, get(weights_col)[1L], by = id_col]
+    weights <- wmap[["V1"]][match(ids, wmap[[id_col]])]
+    if (any(!is.finite(weights))) {
+      stop("`", weights_col, "` produced non-finite weights.")
+    }
+  }
+
+  ## Collapse a row-level cluster column to one label per choice situation
+  ## (same alignment discipline as weights_col).
+  cluster <- if (!is.null(cluster_col)) {
+    .collapse_situation_col(dt, cluster_col, id_col, ids)
+  }
+
   ## choice_idx[i] - 1-based index *within* the choice set data
   ## 0 == outside option (only if chosen = 0 for all inside options & include_outside_option == TRUE)
   if (include_outside_option) {
@@ -372,6 +593,19 @@ prepare_mnl_data <- function(
   }
 
   if (is.null(weights)) weights <- rep(1, length(M))
+
+  ## Weights must be finite and strictly positive. Zero/negative weights would
+  ## silently invalidate weighted and WESML sandwich inference (w in the bread,
+  ## w^2 in the meat). Validated here so every resolution path (weights=,
+  ## weights_col=, and the uniform default) is covered.
+  if (any(!is.finite(weights))) {
+    stop("Weights must be finite, but non-finite values (NA/NaN/Inf) were found.",
+         call. = FALSE)
+  }
+  if (any(weights <= 0)) {
+    stop("Weights must be strictly positive, but values <= 0 were found.",
+         call. = FALSE)
+  }
 
   ## Alternatives summary ------------------------------------------------------
 
@@ -407,7 +641,7 @@ prepare_mnl_data <- function(
   )
 
   ## return output -------------------------------------------------------------
-  structure(
+  out <- structure(
     list(
       X           = X,
       alt_idx     = alt_idx,
@@ -415,6 +649,8 @@ prepare_mnl_data <- function(
       M           = M,
       N           = N,
       weights     = weights,
+      cluster     = cluster,
+      situation_ids = ids,
       include_outside_option = include_outside_option,
       alt_mapping = alt_mapping,
       dropped_cols = if(exists("dropped_vars")) dropped_vars else NULL,
@@ -428,5 +664,8 @@ prepare_mnl_data <- function(
     ),
     class = "choicer_data_mnl"
   )
+  if (!is.null(cs_provenance)) {
+    attr(out, "choice_sampling") <- cs_provenance
+  }
+  out
 }
-

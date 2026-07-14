@@ -1,0 +1,142 @@
+---
+title: "Multinomial logit"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Multinomial logit}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+options(digits = 4)
+```
+
+The multinomial logit (MNL) is the workhorse of discrete choice. choicer fits it
+by maximum likelihood with a C++ core, analytical gradients and an analytical
+Hessian, so estimation and standard errors are fast even with many
+alternative-specific constants.
+
+This vignette does two things: it shows the full MNL workflow, and — because the
+data are simulated from a known process — it checks that choicer **recovers the
+true parameters**.
+
+```{r setup}
+library(choicer)
+set_num_threads(2)
+```
+
+## Simulate a known data-generating process
+
+`simulate_mnl_data()` draws choices from a logit model with i.i.d. Gumbel
+errors. The returned object carries both the data and the true parameters.
+
+```{r sim}
+sim <- simulate_mnl_data(N = 2000, J = 4, seed = 1)
+sim
+```
+
+## Fit
+
+```{r fit}
+fit <- run_mnlogit(
+  data           = sim$data,
+  id_col         = "id",
+  alt_col        = "alt",
+  choice_col     = "choice",
+  covariate_cols = c("x1", "x2")
+)
+summary(fit)
+```
+
+## Did we recover the truth?
+
+`recovery_table()` lines up each estimate against the value that generated the
+data, with the bias, a z-score, and whether the 95% confidence interval covers
+the truth.
+
+```{r recovery}
+recovery_table(fit, sim$true_params)
+```
+
+In this run the intervals cover their true values, which is indicative of
+correct behavior. What matters formally, though, is coverage over repeated
+simulations; a full Monte Carlo exercise is left outside this vignette for
+brevity.
+
+## Post-estimation
+
+The full demand and welfare toolkit is available on the fitted object. Treating
+`x2` as price:
+
+```{r post}
+predict(fit, type = "shares")        # aggregate fitted shares in these data
+elasticities(fit, elast_var = "x2")  # own- and cross-price elasticities
+diversion_ratios(fit)                # where demand goes
+wtp(fit, price_var = "x2")           # willingness to pay, with delta-method SEs
+gof(fit)                             # McFadden R2 and hit rate
+```
+
+## Substitution restrictions
+
+The MNL is useful partly because its substitution structure is transparent.
+Conditional on the included covariates, the odds ratio
+$P_{ij}/P_{ik} = \exp(V_{ij} - V_{ik})$ depends only on alternatives $j$ and
+$k$. This is the familiar individual-level IIA implication, but the more useful
+empirical statement is about counterfactual diversion: for a given decision
+maker, demand leaving one alternative is reallocated across the remaining
+alternatives in proportion to their fitted probabilities.
+
+Aggregate substitution can be less mechanical than that statement suggests.
+The elasticities and diversion ratios reported above are averages over choice
+situations. When covariates, demographics or choice sets vary across situations,
+the aggregate diversion matrix need not equal the simple market-share formula
+$DR(j\to k) = s_k / (1 - s_j)$. The
+[math companion](https://fpcordeiro.github.io/choicer/articles/multinomial_logit_math.html) gives the derivation.
+
+The remaining restriction is substantive: all heterogeneity that matters for
+substitution must be observed and included in the utility index. If closeness is
+driven by unobserved tastes, product groupings, networks, peer groups or other
+latent features, the MNL will not recover that margin. It is then not enough to
+fit shares well; the model may still give the wrong diversion matrix for the
+counterfactual of interest.
+
+That makes the MNL a disciplined baseline, not a straw man. Use it when the
+included variables carry the relevant substitution margin, or when the target is
+an object that does not require richer unobserved structure. Move to
+[nested logit](nl.html), [mixed logit](mxl.html), or
+[multinomial probit](mnp.html) when the empirical question requires grouped
+substitution, random tastes or correlated utility shocks. The
+[getting-started vignette](choicer.html#choosing-among-choice-models) compares
+those choices directly.
+
+## Empirical checklist
+
+Before reporting an MNL result:
+
+- state the estimand and the within-choice-set variation that identifies each
+  coefficient; inspect signs, units, scale, and collinearity;
+- compare inverse-Hessian and robust covariance estimates, cluster repeated
+  decision makers or markets, and use WESML plus the robust sandwich when the
+  sample was drawn by the chosen alternative;
+- distinguish sample shares from population shares and document the source of
+  any external population totals;
+- inspect elasticities and diversion—not fit alone—and compare them with at least
+  one economically plausible richer substitution model when the counterfactual
+  depends on closeness among alternatives;
+- audit WTP and welfare for the sign and magnitude of the price coefficient,
+  units, functional-form restrictions, and support of the counterfactual; and
+- treat MNL as the transparent benchmark against which added heterogeneity,
+  nesting, or covariance must earn its empirical conclusions.
+
+MNL does not recover unobserved product closeness, persistent random tastes, or
+endogenous-price corrections by itself. Robust or clustered standard errors can
+repair inference under their assumptions; they do not change that estimand.
+
+## References
+
+McFadden, D. (1974). Conditional logit analysis of qualitative choice
+behavior. In P. Zarembka (Ed.), *Frontiers in Econometrics*. Academic Press.
+
+Train, K. E. (2009). *Discrete Choice Methods with Simulation* (2nd ed.).
+Cambridge University Press.

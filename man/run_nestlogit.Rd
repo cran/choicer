@@ -18,9 +18,12 @@ run_nestlogit(
   optimizer = NULL,
   control = list(),
   weights = NULL,
+  weights_col = NULL,
   outside_opt_label = NULL,
   include_outside_option = FALSE,
   keep_data = TRUE,
+  se_method = c("hessian", "numeric", "bhhh", "sandwich", "cluster"),
+  cluster_col = NULL,
   nloptr_opts = NULL
 )
 }
@@ -57,7 +60,14 @@ or a custom function. See \code{\link{run_mnlogit}} for details.}
 \item{control}{List of optimizer-specific control parameters.}
 
 \item{weights}{Optional weight vector (convenience workflow). If \code{NULL},
-equal weights are used.}
+equal weights are used. All weights must be finite and strictly positive.}
+
+\item{weights_col}{Optional name of a column in \code{data} holding per-row
+weights (convenience workflow only). The column must be constant within each
+\code{id_col} (one weight per choice situation) and is collapsed accordingly.
+Mutually exclusive with \code{weights}. All weights must be finite and strictly
+positive. Used for choice-based / WESML
+weighting; pair with \code{se_method = "sandwich"} for valid inference.}
 
 \item{outside_opt_label}{Label for the outside option (convenience workflow).}
 
@@ -66,6 +76,23 @@ equal weights are used.}
 
 \item{keep_data}{Logical. If \code{TRUE} (default), stores prepared data in
 the returned object for post-estimation functions.}
+
+\item{se_method}{Method for computing standard errors: \code{"hessian"}
+(default, analytical Hessian via \code{nl_loglik_hessian_parallel}),
+\code{"numeric"} (finite-difference oracle via
+\code{nl_loglik_numeric_hessian}), \code{"bhhh"} (outer product of
+gradients via \code{nl_bhhh_parallel}), \code{"sandwich"} (robust
+Huber--White / WESML variance \eqn{A^{-1} B A^{-1}}), or \code{"cluster"}
+(cluster-robust sandwich; requires \code{cluster_col} or a prepared
+\code{input_data} with a \code{cluster} field). Use \code{"sandwich"}
+under choice-based / WESML weighting. Any of these can also be recomputed
+post hoc via \code{vcov(fit, type = )}.}
+
+\item{cluster_col}{Optional name of a column in \code{data} holding cluster
+labels for cluster-robust standard errors (e.g. a person id when the same
+decision maker contributes several choice situations). Must be constant
+within each \code{id_col}. Supplying \code{cluster_col} without an explicit
+\code{se_method} selects \code{se_method = "cluster"}.}
 
 \item{nloptr_opts}{Deprecated. Use \code{optimizer} and \code{control}
 instead.}

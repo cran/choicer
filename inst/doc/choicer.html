@@ -1,0 +1,770 @@
+<!DOCTYPE html>
+
+<html>
+
+<head>
+
+<meta charset="utf-8" />
+<meta name="generator" content="pandoc" />
+<meta http-equiv="X-UA-Compatible" content="IE=EDGE" />
+
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+
+
+
+<title>Discrete choice from data to policy, in a dozen lines</title>
+
+<script>// Pandoc 2.9 adds attributes on both header and div. We remove the former (to
+// be compatible with the behavior of Pandoc < 2.8).
+document.addEventListener('DOMContentLoaded', function(e) {
+  var hs = document.querySelectorAll("div.section[class*='level'] > :first-child");
+  var i, h, a;
+  for (i = 0; i < hs.length; i++) {
+    h = hs[i];
+    if (!/^h[1-6]$/i.test(h.tagName)) continue;  // it should be a header h1-h6
+    a = h.attributes;
+    while (a.length > 0) h.removeAttribute(a[0].name);
+  }
+});
+</script>
+
+<style type="text/css">
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+span.underline{text-decoration: underline;}
+div.column{display: inline-block; vertical-align: top; width: 50%;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+</style>
+
+
+
+<style type="text/css">
+code {
+white-space: pre;
+}
+.sourceCode {
+overflow: visible;
+}
+</style>
+<style type="text/css" data-origin="pandoc">
+html { -webkit-text-size-adjust: 100%; }
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+{ counter-reset: source-line 0; }
+pre.numberSource code > span
+{ position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+{ content: counter(source-line);
+position: relative; left: -1em; text-align: right; vertical-align: baseline;
+border: none; display: inline-block;
+-webkit-touch-callout: none; -webkit-user-select: none;
+-khtml-user-select: none; -moz-user-select: none;
+-ms-user-select: none; user-select: none;
+padding: 0 4px; width: 4em;
+color: #aaaaaa;
+}
+pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa; padding-left: 4px; }
+div.sourceCode
+{ }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+code span.al { color: #ff0000; font-weight: bold; } 
+code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.at { color: #7d9029; } 
+code span.bn { color: #40a070; } 
+code span.bu { color: #008000; } 
+code span.cf { color: #007020; font-weight: bold; } 
+code span.ch { color: #4070a0; } 
+code span.cn { color: #880000; } 
+code span.co { color: #60a0b0; font-style: italic; } 
+code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.do { color: #ba2121; font-style: italic; } 
+code span.dt { color: #902000; } 
+code span.dv { color: #40a070; } 
+code span.er { color: #ff0000; font-weight: bold; } 
+code span.ex { } 
+code span.fl { color: #40a070; } 
+code span.fu { color: #06287e; } 
+code span.im { color: #008000; font-weight: bold; } 
+code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.kw { color: #007020; font-weight: bold; } 
+code span.op { color: #666666; } 
+code span.ot { color: #007020; } 
+code span.pp { color: #bc7a00; } 
+code span.sc { color: #4070a0; } 
+code span.ss { color: #bb6688; } 
+code span.st { color: #4070a0; } 
+code span.va { color: #19177c; } 
+code span.vs { color: #4070a0; } 
+code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } 
+</style>
+<script>
+// apply pandoc div.sourceCode style to pre.sourceCode instead
+(function() {
+  var sheets = document.styleSheets;
+  for (var i = 0; i < sheets.length; i++) {
+    if (sheets[i].ownerNode.dataset["origin"] !== "pandoc") continue;
+    try { var rules = sheets[i].cssRules; } catch (e) { continue; }
+    var j = 0;
+    while (j < rules.length) {
+      var rule = rules[j];
+      // check if there is a div.sourceCode rule
+      if (rule.type !== rule.STYLE_RULE || rule.selectorText !== "div.sourceCode") {
+        j++;
+        continue;
+      }
+      var style = rule.style.cssText;
+      // check if color or background-color is set
+      if (rule.style.color === '' && rule.style.backgroundColor === '') {
+        j++;
+        continue;
+      }
+      // replace div.sourceCode by a pre.sourceCode rule
+      sheets[i].deleteRule(j);
+      sheets[i].insertRule('pre.sourceCode{' + style + '}', j);
+    }
+  }
+})();
+</script>
+
+
+
+
+<style type="text/css">body {
+background-color: #fff;
+margin: 1em auto;
+max-width: 700px;
+overflow: visible;
+padding-left: 2em;
+padding-right: 2em;
+font-family: "Open Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+font-size: 14px;
+line-height: 1.35;
+}
+#TOC {
+clear: both;
+margin: 0 0 10px 10px;
+padding: 4px;
+width: 400px;
+border: 1px solid #CCCCCC;
+border-radius: 5px;
+background-color: #f6f6f6;
+font-size: 13px;
+line-height: 1.3;
+}
+#TOC .toctitle {
+font-weight: bold;
+font-size: 15px;
+margin-left: 5px;
+}
+#TOC ul {
+padding-left: 40px;
+margin-left: -1.5em;
+margin-top: 5px;
+margin-bottom: 5px;
+}
+#TOC ul ul {
+margin-left: -2em;
+}
+#TOC li {
+line-height: 16px;
+}
+table {
+margin: 1em auto;
+border-width: 1px;
+border-color: #DDDDDD;
+border-style: outset;
+border-collapse: collapse;
+}
+table th {
+border-width: 2px;
+padding: 5px;
+border-style: inset;
+}
+table td {
+border-width: 1px;
+border-style: inset;
+line-height: 18px;
+padding: 5px 5px;
+}
+table, table th, table td {
+border-left-style: none;
+border-right-style: none;
+}
+table thead, table tr.even {
+background-color: #f7f7f7;
+}
+p {
+margin: 0.5em 0;
+}
+blockquote {
+background-color: #f6f6f6;
+padding: 0.25em 0.75em;
+}
+hr {
+border-style: solid;
+border: none;
+border-top: 1px solid #777;
+margin: 28px 0;
+}
+dl {
+margin-left: 0;
+}
+dl dd {
+margin-bottom: 13px;
+margin-left: 13px;
+}
+dl dt {
+font-weight: bold;
+}
+ul {
+margin-top: 0;
+}
+ul li {
+list-style: circle outside;
+}
+ul ul {
+margin-bottom: 0;
+}
+pre, code {
+background-color: #f7f7f7;
+border-radius: 3px;
+color: #333;
+white-space: pre-wrap; 
+}
+pre {
+border-radius: 3px;
+margin: 5px 0px 10px 0px;
+padding: 10px;
+}
+pre:not([class]) {
+background-color: #f7f7f7;
+}
+code {
+font-family: Consolas, Monaco, 'Courier New', monospace;
+font-size: 85%;
+}
+p > code, li > code {
+padding: 2px 0px;
+}
+div.figure {
+text-align: center;
+}
+img {
+background-color: #FFFFFF;
+padding: 2px;
+border: 1px solid #DDDDDD;
+border-radius: 3px;
+border: 1px solid #CCCCCC;
+margin: 0 5px;
+}
+h1 {
+margin-top: 0;
+font-size: 35px;
+line-height: 40px;
+}
+h2 {
+border-bottom: 4px solid #f7f7f7;
+padding-top: 10px;
+padding-bottom: 2px;
+font-size: 145%;
+}
+h3 {
+border-bottom: 2px solid #f7f7f7;
+padding-top: 10px;
+font-size: 120%;
+}
+h4 {
+border-bottom: 1px solid #f7f7f7;
+margin-left: 8px;
+font-size: 105%;
+}
+h5, h6 {
+border-bottom: 1px solid #ccc;
+font-size: 105%;
+}
+a {
+color: #0033dd;
+text-decoration: none;
+}
+a:hover {
+color: #6666ff; }
+a:visited {
+color: #800080; }
+a:visited:hover {
+color: #BB00BB; }
+a[href^="http:"] {
+text-decoration: underline; }
+a[href^="https:"] {
+text-decoration: underline; }
+
+code > span.kw { color: #555; font-weight: bold; } 
+code > span.dt { color: #902000; } 
+code > span.dv { color: #40a070; } 
+code > span.bn { color: #d14; } 
+code > span.fl { color: #d14; } 
+code > span.ch { color: #d14; } 
+code > span.st { color: #d14; } 
+code > span.co { color: #888888; font-style: italic; } 
+code > span.ot { color: #007020; } 
+code > span.al { color: #ff0000; font-weight: bold; } 
+code > span.fu { color: #900; font-weight: bold; } 
+code > span.er { color: #a61717; background-color: #e3d2d2; } 
+</style>
+
+
+
+
+</head>
+
+<body>
+
+
+
+
+<h1 class="title toc-ignore">Discrete choice from data to policy, in a
+dozen lines</h1>
+
+
+
+<p><strong>choicer</strong> estimates discrete-choice models for applied
+economics. The likelihoods, analytical gradients and Hessians are
+written in C++ with OpenMP parallelization, so estimation is fast and
+scales to specifications with hundreds of alternative-specific
+constants. Just as important, <em>one consistent post-estimation
+interface</em> takes you from a fitted model to the quantities you
+actually report: fitted shares (population shares when the sampling
+design supports that interpretation), elasticities, diversion ratios,
+willingness-to-pay with standard errors, and the welfare effects of a
+policy counterfactual.</p>
+<p>This vignette runs the whole workflow on a real data set in a few
+lines.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" tabindex="-1"></a><span class="fu">library</span>(choicer)</span>
+<span id="cb1-2"><a href="#cb1-2" tabindex="-1"></a><span class="fu">set_num_threads</span>(<span class="dv">2</span>) <span class="co"># set for CRAN compilation; raise this on your own machine</span></span></code></pre></div>
+<div id="the-data" class="section level2">
+<h2>The data</h2>
+<p><code>mode_choice</code> is the classic Greene &amp; Hensher
+intercity travel-mode data: 210 travellers, each choosing among
+<strong>air, train, bus and car</strong>. It ships with the package in
+choicer’s long layout — one row per traveller and alternative.</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb2-1"><a href="#cb2-1" tabindex="-1"></a><span class="fu">data</span>(mode_choice)</span>
+<span id="cb2-2"><a href="#cb2-2" tabindex="-1"></a><span class="fu">head</span>(mode_choice, <span class="dv">4</span>)</span>
+<span id="cb2-3"><a href="#cb2-3" tabindex="-1"></a><span class="co">#&gt;   id  mode choice wait travel vcost gcost income size</span></span>
+<span id="cb2-4"><a href="#cb2-4" tabindex="-1"></a><span class="co">#&gt; 1  1   air      0   69    100    59    70     35    1</span></span>
+<span id="cb2-5"><a href="#cb2-5" tabindex="-1"></a><span class="co">#&gt; 2  1 train      0   34    372    31    71     35    1</span></span>
+<span id="cb2-6"><a href="#cb2-6" tabindex="-1"></a><span class="co">#&gt; 3  1   bus      0   35    417    25    70     35    1</span></span>
+<span id="cb2-7"><a href="#cb2-7" tabindex="-1"></a><span class="co">#&gt; 4  1   car      1    0    180    10    30     35    1</span></span></code></pre></div>
+<p><code>wait</code> (terminal waiting time) and <code>travel</code>
+(in-vehicle time) are in minutes; <code>vcost</code> is the travel cost.
+These vary across modes within a traveller, which is exactly what a
+choice model needs.</p>
+</div>
+<div id="fit-a-multinomial-logit" class="section level2">
+<h2>Fit a multinomial logit</h2>
+<p>Point at the identifier, alternative and choice columns, list the
+covariates, and fit. Alternative-specific constants are included by
+default.</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb3-1"><a href="#cb3-1" tabindex="-1"></a>fit <span class="ot">&lt;-</span> <span class="fu">run_mnlogit</span>(</span>
+<span id="cb3-2"><a href="#cb3-2" tabindex="-1"></a>  <span class="at">data           =</span> mode_choice,</span>
+<span id="cb3-3"><a href="#cb3-3" tabindex="-1"></a>  <span class="at">id_col         =</span> <span class="st">&quot;id&quot;</span>,</span>
+<span id="cb3-4"><a href="#cb3-4" tabindex="-1"></a>  <span class="at">alt_col        =</span> <span class="st">&quot;mode&quot;</span>,</span>
+<span id="cb3-5"><a href="#cb3-5" tabindex="-1"></a>  <span class="at">choice_col     =</span> <span class="st">&quot;choice&quot;</span>,</span>
+<span id="cb3-6"><a href="#cb3-6" tabindex="-1"></a>  <span class="at">covariate_cols =</span> <span class="fu">c</span>(<span class="st">&quot;wait&quot;</span>, <span class="st">&quot;travel&quot;</span>, <span class="st">&quot;vcost&quot;</span>)</span>
+<span id="cb3-7"><a href="#cb3-7" tabindex="-1"></a>)</span>
+<span id="cb3-8"><a href="#cb3-8" tabindex="-1"></a><span class="co">#&gt; Optimization run time 0h:0m:0.01s</span></span>
+<span id="cb3-9"><a href="#cb3-9" tabindex="-1"></a><span class="fu">summary</span>(fit)</span>
+<span id="cb3-10"><a href="#cb3-10" tabindex="-1"></a><span class="co">#&gt; Multinomial Logit (MNL) model</span></span>
+<span id="cb3-11"><a href="#cb3-11" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb3-12"><a href="#cb3-12" tabindex="-1"></a><span class="co">#&gt; Parameter    Estimate  Std.Error  z-value  Pr(&gt;|z|)  </span></span>
+<span id="cb3-13"><a href="#cb3-13" tabindex="-1"></a><span class="co">#&gt; wait        -0.096887   0.010342  -9.3683  0.00e+00  ***</span></span>
+<span id="cb3-14"><a href="#cb3-14" tabindex="-1"></a><span class="co">#&gt; travel      -0.003995   0.000849  -4.7043  2.55e-06  ***</span></span>
+<span id="cb3-15"><a href="#cb3-15" tabindex="-1"></a><span class="co">#&gt; vcost       -0.013912   0.006651  -2.0916  3.65e-02  *</span></span>
+<span id="cb3-16"><a href="#cb3-16" tabindex="-1"></a><span class="co">#&gt; ASC_train   -0.786669   0.602607  -1.3054  1.92e-01  </span></span>
+<span id="cb3-17"><a href="#cb3-17" tabindex="-1"></a><span class="co">#&gt; ASC_bus     -1.433640   0.680713  -2.1061  3.52e-02  *</span></span>
+<span id="cb3-18"><a href="#cb3-18" tabindex="-1"></a><span class="co">#&gt; ASC_car     -4.739865   0.867532  -5.4636  4.67e-08  ***</span></span>
+<span id="cb3-19"><a href="#cb3-19" tabindex="-1"></a><span class="co">#&gt; ---</span></span>
+<span id="cb3-20"><a href="#cb3-20" tabindex="-1"></a><span class="co">#&gt; Signif. codes:  &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05</span></span>
+<span id="cb3-21"><a href="#cb3-21" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb3-22"><a href="#cb3-22" tabindex="-1"></a><span class="co">#&gt; Std. Errors: Analytical Hessian </span></span>
+<span id="cb3-23"><a href="#cb3-23" tabindex="-1"></a><span class="co">#&gt; Log-likelihood: -192.889 </span></span>
+<span id="cb3-24"><a href="#cb3-24" tabindex="-1"></a><span class="co">#&gt; AIC: 397.777  | BIC: 417.86 </span></span>
+<span id="cb3-25"><a href="#cb3-25" tabindex="-1"></a><span class="co">#&gt; McFadden R2: 0.337 (adj: 0.317) | Hit rate: 0.738 </span></span>
+<span id="cb3-26"><a href="#cb3-26" tabindex="-1"></a><span class="co">#&gt; N: 210  | Parameters: 6 </span></span>
+<span id="cb3-27"><a href="#cb3-27" tabindex="-1"></a><span class="co">#&gt; Optimization time: 0.01 s</span></span>
+<span id="cb3-28"><a href="#cb3-28" tabindex="-1"></a><span class="co">#&gt; Convergence: 3 ( NLOPT_FTOL_REACHED: Optimization stopped because ftol_rel or ftol_abs (above) was reached. )</span></span></code></pre></div>
+<p>Estimation takes a fraction of a second. Travellers dislike waiting
+time, in-vehicle time and cost — all three coefficients are negative —
+and the <code>summary()</code> footer reports McFadden’s R² and the
+in-sample hit rate alongside the usual fit statistics.</p>
+</div>
+<div id="predicted-shares" class="section level2">
+<h2>Predicted shares</h2>
+<div class="sourceCode" id="cb4"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" tabindex="-1"></a>shares <span class="ot">&lt;-</span> <span class="fu">drop</span>(<span class="fu">predict</span>(fit, <span class="at">type =</span> <span class="st">&quot;shares&quot;</span>))</span>
+<span id="cb4-2"><a href="#cb4-2" tabindex="-1"></a><span class="fu">names</span>(shares) <span class="ot">&lt;-</span> <span class="fu">as.character</span>(fit<span class="sc">$</span>alt_mapping[[<span class="dv">2</span>]])</span>
+<span id="cb4-3"><a href="#cb4-3" tabindex="-1"></a><span class="fu">round</span>(shares, <span class="dv">3</span>)</span>
+<span id="cb4-4"><a href="#cb4-4" tabindex="-1"></a><span class="co">#&gt;   air train   bus   car </span></span>
+<span id="cb4-5"><a href="#cb4-5" tabindex="-1"></a><span class="co">#&gt; 0.276 0.300 0.143 0.281</span></span>
+<span id="cb4-6"><a href="#cb4-6" tabindex="-1"></a></span>
+<span id="cb4-7"><a href="#cb4-7" tabindex="-1"></a><span class="fu">barplot</span>(shares, <span class="at">col =</span> <span class="st">&quot;steelblue&quot;</span>, <span class="at">ylab =</span> <span class="st">&quot;Predicted share&quot;</span>,</span>
+<span id="cb4-8"><a href="#cb4-8" tabindex="-1"></a>        <span class="at">main =</span> <span class="st">&quot;Predicted mode shares&quot;</span>)</span></code></pre></div>
+<p><img role="img" src="data:image/png;base64,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qVevntxzzz1SqlSpTOfEe+Nvf/ubzJ0711xm4cKFomUK37dgwQLJm/fc/g7cvHmzlC5dWkqWLBmzauzevVv+53/+x+Q3cOBAGTx4cMzyjmdGyS73zp07pX///qaKgwYNEv0hIYCAvwUI4PzdPpQuTQROnDghH330UY61ffXVV2XKlCnSqVOnHM+L5cG1a9c65QqFQiaAc+/L7fV++ukn+ctf/iJPPPGErF69OqYB3M8//+yUt02bNrktWtLOT3a5w6/frl27pDlwYQQQiF6AAC56K85EICECtWrVkm7dusmZM2fk2LFj8uGHH4r2kGRkZMidd94p33zzTULKkd1FmjVrJvv37zeHtUcut+nxxx+XRx99NLdv43wEEEAAgTABArgwDF4i4AcBDZCeeeYZpygaxLVq1Uq+/vpr+fbbb0VvPdaoUcM5br84dOiQuZ1ZvHhxe5f5rT1nW7dulfLly0vRokUzHXNvnD59Wnbs2CFVq1bN9tboH/7wB9GfnJIGeBqAlitXLqfTsj2WmzLv2bNH8uXLZ27HZpthlAe07uqkt67tpGXZvn27VKpUyVzH3h/pt5ZFbymXKVMm0uFM+3JT7tx4ZLrIfzb0s7Fr1y658MILpWzZstm2bfh77WtWrlxZ8ueP/FWhbay3fw8fPmzyvuiii8KziPg6u8+p5qHHqlSpEvF99k79jOofM3rtiy++2PMzbb+P3wikmsC5DV5JNQXqg4CPBTTo6tmzp1PCJUuWmNe/+tWvpFixYnL99dfL+PHjTdCggcO4cePMcb0t+8c//tHcotSATwO7pk2byv/93/85edkvNEj83e9+Z87Rc3WsneZz9uxZ+xTn96233mquq9fWL1E76Rf+P/7xDxPoaDn0y1yD0ZEjR8revXvNab17987U+9a4cWOpUKGCnYXkpsx6y7lOnTom4NKg5IorrpANGzY4eXm9uPLKK009br/9dpk+fbpooKLBg47JGzp0qKn7s88+a/KvVq2aCRDV052OHz9uAtr69es7ZdG8nnzyyYh+uSl3bjzc5dLtadOmifboantecsklpk0qVqwokyZNinS62aft+Oc//9nU1/7c/P73vzdtE/6msWPHmmBQA1utuwZTev6iRYvCTxOvz6l+HvVzoGXUPxw0yBw2bFiW62mgqOMaixQpItWrVzf10s9gly5dTICd6aJsIJAO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7fXXX5dJkya53somAggggAACCCCAQDIEIvbAhRfkF7/4hVkqRB9e//333zuHbrvtNnML1dnBCwQQQAABBBBAAIGECHgGcFqKrl27mnXgdu3aZQql49++/vprufTSS+Wpp55KSEG5CAIIIIAAAggggMD/F/AM4PSpC5988omsWbNGWrVqZd6lY9708VpPPvmkjBo1Sk6ePIknAggggAACCCCAQIIEPAO4hQsXSvPmzaVu3bpZiqRPZDh27Jhs27YtyzF2IIAAAggggAACCMRHwDOA0+f66USG7du3ZynB7NmzJV++fMLD7LPQsAMBBBBAAAEEEIibgGcAd+WVV8rFF18sv/nNb0QX9d2xY4dZF+7NN9+UBx98UPr27StFihSJWwHJGAEEEEAAAQQQQCCzQLbLiNin6Xpvn332mVx99dVy1VVX2bvN7z59+sizzz6baV+iN3RCxd69e01PYOnSpRN9ea6HAAIIIIAAAggkXMAzgNMSValSRVatWmV631auXGmCJb21WqNGjYQXWC+YkZFh1qWbPn26eX369GlTjhIlSkj16tWlc+fOMmbMGClWrFhSysdFEUAAAQQQQACBeApEDOB0zJveLh0yZIh5kP3bb7+dpQy6jIid7rvvPvtl3H9v3brVPAFCZ8Lq7duaNWuK9rzptj6TdfPmzTJjxgzzhAidgFGrVq24l4kLIIAAAggggAACiRTINoB77LHH5LrrrpMtW7aIvs4pJTKAGz9+vOllW7BggRQqVChiscaNGyfdu3eXKVOmmJ64iCexEwEEEEAAAQQQCKhAxEkMd9xxhxw4cEDq1atnFvHV1zn9JLLuegt34MCB2QZvWpYCBQqYhYfnzp2byKJxLQQQQAABBBBAICECEQO4hFz5HC+iiwnrIsJeSW8Bs7yJlxLHEUAAAQQQQCCIAhFvob711lvy3HPPRV0fDZYSlfr162eeCLF7927p37+/GeNWpkwZyZs3rxkDp7d8p06dKnPmzBG9zUpCAAEEEEAAAQRSTSBiAFe0aFG56KKLnLrqY7T0p0OHDqKzT/WZqDpB4MiRI2Z9OOfEBLxo2rSpmRE7dOhQGTRokJw9ezbLVXUW6vz586V9+/ZZjrEDAQQQQAABBBAIukDEAK5nz56iP5p27twpjRo1ktdff930eNkVPnXqlNx+++3y7bff2rsS9rt27domgNRn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" /><!-- --></p>
+<p>One thing this classic data set teaches well: the survey was
+<em>choice-based</em> — it deliberately over-sampled the minority modes
+and under-sampled car (see <code>?mode_choice</code>) — so the shares
+above reproduce the sampling design, not population mode shares. The
+damage is contained in a useful way: in a logit with a full set of
+alternative-specific constants, choice-based sampling leaves the slope
+coefficients consistent (Manski and Lerman 1977), so the
+willingness-to-pay ratios below are unaffected, while the constants —
+and the share, elasticity and surplus <em>levels</em> computed from
+fitted probabilities — inherit the design. We proceed unweighted because
+the workflow, not the level estimates, is the point here; the correction
+is a weighting, not a different model, and it is the subject of the <a href="wesml.html">choice-based sampling vignette</a>.</p>
+</div>
+<div id="elasticities-and-diversion" class="section level2">
+<h2>Elasticities and diversion</h2>
+<p>How does demand respond to cost, and where does it go? The same
+fitted object <code>fit</code> answers both, with no extra
+bookkeeping.</p>
+<p>To recover elasticities with respect to the <code>vcost</code>
+variable, simply run</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb5-1"><a href="#cb5-1" tabindex="-1"></a><span class="fu">elasticities</span>(fit, <span class="at">elast_var =</span> <span class="st">&quot;vcost&quot;</span>)</span>
+<span id="cb5-2"><a href="#cb5-2" tabindex="-1"></a><span class="co">#&gt;           air   train      bus      car</span></span>
+<span id="cb5-3"><a href="#cb5-3" tabindex="-1"></a><span class="co">#&gt; air   -0.8309  0.1679  0.06729  0.06912</span></span>
+<span id="cb5-4"><a href="#cb5-4" tabindex="-1"></a><span class="co">#&gt; train  0.3551 -0.5463  0.06729  0.06912</span></span>
+<span id="cb5-5"><a href="#cb5-5" tabindex="-1"></a><span class="co">#&gt; bus    0.3551  0.1679 -0.39815  0.06912</span></span>
+<span id="cb5-6"><a href="#cb5-6" tabindex="-1"></a><span class="co">#&gt; car    0.3551  0.1679  0.06729 -0.22296</span></span></code></pre></div>
+<p>The own-cost elasticities sit on the diagonal; off-diagonal entries
+are the cross-elasticities. For example, the own-elasticity of train
+mode is -0.546, and the cross-elasticity from train to bus is ~0.17.</p>
+<p>The corresponding diversion matrix answers a slightly different
+question: among the travellers who leave one mode after a marginal cost
+increase, where do they go?</p>
+<div class="sourceCode" id="cb6"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb6-1"><a href="#cb6-1" tabindex="-1"></a><span class="fu">diversion_ratios</span>(fit)</span>
+<span id="cb6-2"><a href="#cb6-2" tabindex="-1"></a><span class="co">#&gt;          air  train    bus    car</span></span>
+<span id="cb6-3"><a href="#cb6-3" tabindex="-1"></a><span class="co">#&gt; air   0.0000 0.2776 0.2513 0.3860</span></span>
+<span id="cb6-4"><a href="#cb6-4" tabindex="-1"></a><span class="co">#&gt; train 0.3080 0.0000 0.3556 0.4144</span></span>
+<span id="cb6-5"><a href="#cb6-5" tabindex="-1"></a><span class="co">#&gt; bus   0.1719 0.2192 0.0000 0.1996</span></span>
+<span id="cb6-6"><a href="#cb6-6" tabindex="-1"></a><span class="co">#&gt; car   0.5201 0.5032 0.3931 0.0000</span></span></code></pre></div>
+<p>Columns indicate the origin and rows the destination. In this fit, a
+marginal increase in train’s cost diverts the displaced travellers
+roughly 28% to air, 22% to bus and 50% to car.</p>
+<p>The MNL makes this calculation especially transparent. Conditional on
+the included covariates, diversion is governed by fitted choice
+probabilities rather than by an unobserved notion of closeness among
+alternatives. That is a useful baseline, and also a restriction. If the
+empirical object turns on grouped substitution, unobserved taste
+heterogeneity, or counterfactuals in which the composition of the choice
+set changes, the <a href="nl.html">nested logit</a>, <a href="mxl.html">mixed logit</a>, and <a href="mnp.html">multinomial
+probit</a> move that substitution structure in different directions. The
+comparison is summarized in <a href="#choosing-among-choice-models">Choosing among choice models</a>
+below.</p>
+</div>
+<div id="willingness-to-pay" class="section level2">
+<h2>Willingness to pay</h2>
+<p>With <code>vcost</code> playing the role of price, <code>wtp()</code>
+returns the marginal value of each attribute in money units, with
+delta-method standard errors.</p>
+<div class="sourceCode" id="cb7"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb7-1"><a href="#cb7-1" tabindex="-1"></a><span class="fu">wtp</span>(fit, <span class="at">price_var =</span> <span class="st">&quot;vcost&quot;</span>)</span>
+<span id="cb7-2"><a href="#cb7-2" tabindex="-1"></a><span class="co">#&gt; Willingness to pay (WTP), price variable: &#39;vcost&#39; (95% CI)</span></span>
+<span id="cb7-3"><a href="#cb7-3" tabindex="-1"></a><span class="co">#&gt;        Estimate Std_Error z_value CI_lower  CI_upper</span></span>
+<span id="cb7-4"><a href="#cb7-4" tabindex="-1"></a><span class="co">#&gt; wait    -6.9645    3.4085  -2.043 -13.6450 -0.283902</span></span>
+<span id="cb7-5"><a href="#cb7-5" tabindex="-1"></a><span class="co">#&gt; travel  -0.2871    0.1436  -2.000  -0.5685 -0.005757</span></span></code></pre></div>
+<p>These are the travellers’ implied <strong>value of time</strong>: how
+much they would pay to shave a minute of in-vehicle or terminal
+time.</p>
+</div>
+<div id="a-policy-counterfactual" class="section level2">
+<h2>A policy counterfactual</h2>
+<p>Suppose a subsidy cuts the cost of <strong>train</strong> travel by
+25%. Perturb the data and predict — no refitting required.</p>
+<div class="sourceCode" id="cb8"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb8-1"><a href="#cb8-1" tabindex="-1"></a>mc_cf <span class="ot">&lt;-</span> mode_choice</span>
+<span id="cb8-2"><a href="#cb8-2" tabindex="-1"></a>mc_cf<span class="sc">$</span>vcost[mc_cf<span class="sc">$</span>mode <span class="sc">==</span> <span class="st">&quot;train&quot;</span>] <span class="ot">&lt;-</span> mc_cf<span class="sc">$</span>vcost[mc_cf<span class="sc">$</span>mode <span class="sc">==</span> <span class="st">&quot;train&quot;</span>] <span class="sc">*</span> <span class="fl">0.75</span></span>
+<span id="cb8-3"><a href="#cb8-3" tabindex="-1"></a></span>
+<span id="cb8-4"><a href="#cb8-4" tabindex="-1"></a>shares_cf <span class="ot">&lt;-</span> <span class="fu">drop</span>(<span class="fu">predict</span>(fit, <span class="at">type =</span> <span class="st">&quot;shares&quot;</span>, <span class="at">newdata =</span> mc_cf))</span>
+<span id="cb8-5"><a href="#cb8-5" tabindex="-1"></a><span class="fu">names</span>(shares_cf) <span class="ot">&lt;-</span> <span class="fu">names</span>(shares)</span>
+<span id="cb8-6"><a href="#cb8-6" tabindex="-1"></a></span>
+<span id="cb8-7"><a href="#cb8-7" tabindex="-1"></a><span class="fu">rbind</span>(<span class="at">baseline =</span> shares, <span class="at">counterfactual =</span> shares_cf) <span class="sc">|&gt;</span> <span class="fu">round</span>(<span class="dv">3</span>)</span>
+<span id="cb8-8"><a href="#cb8-8" tabindex="-1"></a><span class="co">#&gt;                  air train   bus   car</span></span>
+<span id="cb8-9"><a href="#cb8-9" tabindex="-1"></a><span class="co">#&gt; baseline       0.276 0.300 0.143 0.281</span></span>
+<span id="cb8-10"><a href="#cb8-10" tabindex="-1"></a><span class="co">#&gt; counterfactual 0.269 0.324 0.138 0.270</span></span></code></pre></div>
+<p>Train’s share rises, drawing travellers away from the other modes. We
+can put a money value on the change in welfare with the expected
+consumer surplus:</p>
+<div class="sourceCode" id="cb9"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb9-1"><a href="#cb9-1" tabindex="-1"></a>cs0 <span class="ot">&lt;-</span> <span class="fu">consumer_surplus</span>(fit, <span class="at">price_var =</span> <span class="st">&quot;vcost&quot;</span>)</span>
+<span id="cb9-2"><a href="#cb9-2" tabindex="-1"></a>cs1 <span class="ot">&lt;-</span> <span class="fu">consumer_surplus</span>(fit, <span class="at">price_var =</span> <span class="st">&quot;vcost&quot;</span>, <span class="at">newdata =</span> mc_cf)</span>
+<span id="cb9-3"><a href="#cb9-3" tabindex="-1"></a></span>
+<span id="cb9-4"><a href="#cb9-4" tabindex="-1"></a>cs1<span class="sc">$</span>mean_cs <span class="sc">-</span> cs0<span class="sc">$</span>mean_cs <span class="co"># change in mean consumer surplus</span></span>
+<span id="cb9-5"><a href="#cb9-5" tabindex="-1"></a><span class="co">#&gt; [1] 3.2</span></span></code></pre></div>
+<p>The cheaper train fare raises expected consumer surplus, as it
+should. The number is a model-based demand calculation, not a causal
+estimate by itself: it inherits the maintained utility specification —
+including linearity in cost, which fixes the marginal utility of income
+and rules out income effects (Train 2009, Ch. 3) — the price
+coefficient, and the assumption that the counterfactual changes only the
+variables you changed in <code>newdata</code>.</p>
+</div>
+<div id="one-interface-every-model" class="section level2">
+<h2>One interface, every model</h2>
+<p>Everything above — <code>predict()</code>,
+<code>elasticities()</code>, <code>diversion_ratios()</code>,
+<code>wtp()</code>, <code>consumer_surplus()</code>, plus
+<code>blp()</code> for share inversion — is also available on
+<strong>mixed logit</strong> (<code>run_mxlogit()</code>) and
+<strong>nested logit</strong> (<code>run_nestlogit()</code>) fits, with
+model-specific arguments where the economic object differs (notably the
+perturbation coordinate for MXL diversion). choicer also offers Bayesian
+samplers: a <strong>multinomial probit</strong>
+(<code>run_mnprobit()</code>) and <strong>hierarchical</strong> logit
+and probit models (<code>run_hmnlogit()</code>,
+<code>run_hmnprobit()</code>) with panel random coefficients and
+BLP-style alternative effects. Learn each model in its own vignette:</p>
+<ul>
+<li><a href="mnl.html">Multinomial logit</a> — the workhorse, and a
+parameter-recovery check</li>
+<li><a href="mxl.html">Mixed logit</a> — random coefficients and
+preference heterogeneity</li>
+<li><a href="nl.html">Nested logit</a> — grouped substitution through
+nests</li>
+<li><a href="mnp.html">Bayesian multinomial probit</a> — correlated
+utility shocks via MCMC</li>
+<li><a href="hb.html">Hierarchical Bayes</a> — panel tastes,
+partially-pooled product effects, and entry counterfactuals</li>
+</ul>
+<p>Two further vignettes cover inference and sampling design:</p>
+<ul>
+<li><a href="inference.html">Which standard errors, and when</a> —
+Hessian, BHHH, robust and cluster-robust variances, recomputable post
+hoc via <code>vcov()</code></li>
+<li><a href="wesml.html">Choice-based sampling and WESML weights</a> —
+estimation when the sample was drawn by outcome</li>
+</ul>
+</div>
+<div id="choosing-among-choice-models" class="section level2">
+<h2>Choosing among choice models</h2>
+<p>The useful starting point is not the name of the model. It is the
+object you intend to report. Own-price elasticities, diversion ratios,
+WTP, logsum welfare, entry effects and merger simulations put different
+demands on a model’s substitution structure and taste heterogeneity. A
+model that reproduces observed shares can still give poor answers to a
+counterfactual if the relevant substitution margin is supplied mainly by
+functional form.</p>
+<p>choicer v0.2.0 supplies diversion and demand-side counterfactual
+ingredients, but it does not implement a merger-equilibrium simulator;
+merger analysis also requires a supply model, conduct assumptions, and a
+price-equilibrium solve.</p>
+<p>For that reason, the model choice question is:</p>
+<blockquote>
+<p>What variation identifies the substitution pattern needed for the
+object I want to report?</p>
+</blockquote>
+<p>IIA is one implication of the MNL at the individual level:
+conditional on covariates, the odds between two alternatives do not
+depend on the rest of the choice set. That fact is worth knowing, but it
+should not organize the empirical discussion. The important question is
+which restrictions generate substitution beyond observed covariates, and
+whether the data contain variation that can discipline the corresponding
+parameters.</p>
+<table>
+<colgroup>
+<col width="33%" />
+<col width="33%" />
+<col width="33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Model</th>
+<th>What supplies substitution structure?</th>
+<th>What has to be defended?</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><strong>Multinomial logit</strong></td>
+<td>Included covariates and observed heterogeneity across choice
+situations.</td>
+<td>The maintained utility index and the absence of unobserved closeness
+among alternatives. Individual-level diversion is proportional to fitted
+choice probabilities.</td>
+</tr>
+<tr class="even">
+<td><strong>Nested logit</strong></td>
+<td>Shared unobservables within pre-specified nests, summarized by one
+dissimilarity parameter per nest.</td>
+<td>The nesting tree and the random-utility interpretation of the
+estimated dissimilarity parameters. Correlation exists only where the
+tree permits it.</td>
+</tr>
+<tr class="odd">
+<td><strong>Mixed logit</strong></td>
+<td>A mixing distribution <span class="math inline">\(f(\beta)\)</span>
+for tastes, possibly with correlated random coefficients.</td>
+<td>The distributional family, its tails, simulation accuracy, and the
+variation that identifies heterogeneity. choicer’s
+<code>run_mxlogit()</code> is cross-sectional and does not exploit
+persistence across repeated choices; use HMNL when one taste draw should
+persist within person.</td>
+</tr>
+<tr class="even">
+<td><strong>Multinomial probit</strong></td>
+<td>A covariance matrix for utility-difference shocks.</td>
+<td>Scale normalization, a rapidly growing covariance parameterization,
+and MCMC diagnostics. Alternative-varying covariates and defensible
+exclusions across utility equations help separate systematic utility
+from covariance (Keane 1992). choicer does not yet provide MNP
+prediction or a rule for transporting covariance to counterfactual
+choice sets.</td>
+</tr>
+<tr class="odd">
+<td><strong>Hierarchical MNL</strong></td>
+<td>Persistent taste heterogeneity <span class="math inline">\(\beta_i
+\sim N(b, W)\)</span> plus partially-pooled alternative effects <span class="math inline">\(\delta_j = z_j&#39;\theta + \xi_j\)</span>, with
+iid EV1 choice shocks.</td>
+<td>The priors, MCMC convergence, and—for entry counterfactuals—the
+exchangeability of entrant residual quality with incumbents. Repeated
+choices plus useful within-person variation are what discipline the
+taste distribution.</td>
+</tr>
+<tr class="even">
+<td><strong>Hierarchical MNP</strong></td>
+<td>The same panel tastes and alternative hierarchy, with iid normal
+utility-level shocks and a stochastic outside option.</td>
+<td>Per-draw scale normalization, normal-only random coefficients, and
+the iid shock restriction. Unlike <code>run_mnprobit()</code>, HMNP does
+not estimate an unrestricted utility-difference covariance;
+expected-maximum welfare is not implemented.</td>
+</tr>
+</tbody>
+</table>
+<p>In practice, a mature research design can be organized around seven
+questions. They are deliberately about the empirical object rather than
+a preferred estimator.</p>
+<ol style="list-style-type: decimal">
+<li><p><strong>What is the estimand and decision environment?</strong>
+State whether the target is a utility slope, WTP ratio or distribution,
+substitution pattern, population share, welfare contrast, or entry
+effect. Define the baseline and counterfactual menus, who faces them,
+and the horizon over which adjustment is allowed. An own-price
+elasticity on the observed menu may need less structure than diversion
+after exit, entry by a new product, or welfare under a menu the data
+have never observed.</p></li>
+<li><p><strong>What population and sampling design connect the data to
+that estimand?</strong> Define the choice situation, availability set,
+outside option, sampling unit, and aggregation weights. Distinguish
+sample shares from population or market shares. For a choice-based
+sample, document the source, population, date, and uncertainty of the
+external shares <span class="math inline">\(Q\)</span>; WESML transports
+the likelihood to that population but does not make uncertain benchmark
+totals known.</p></li>
+<li><p><strong>Which variation identifies systematic utility and which
+assumptions make it exogenous?</strong> Map each coefficient to
+within-choice-set, across-market, experimental, or panel variation. Ask
+whether prices, waiting times, product availability, or hospital quality
+respond to latent demand. Neither a richer covariance model nor robust
+standard errors repair an endogenous utility shifter; instruments, a
+defensible control function, or another research design must supply that
+argument.</p></li>
+<li><p><strong>What supplies substitution beyond observed
+utility?</strong> Make explicit what is normalized, excluded, pooled, or
+supplied by iid shocks, a nesting tree, the tails of <span class="math inline">\(f(\beta)\)</span>, an unrestricted probit
+covariance, or the hierarchical alternative distribution. A model can
+reproduce observed shares while its policy substitution comes mainly
+from one of these maintained restrictions.</p></li>
+<li><p><strong>Does the data variation earn the model’s
+flexibility?</strong> A thin cross-section with one choice per person
+and a nearly fixed menu rarely disciplines a rich taste distribution. A
+motivated nest may be more credible than weakly identified random
+coefficients; repeated tasks with useful attribute variation can earn
+persistent panel tastes; many alternatives with informative <span class="math inline">\(Z\)</span> can earn an alternative-level
+hierarchy. Use the simplest model that carries the margin required by
+Question 1, not the model with the longest parameter vector.</p></li>
+<li><p><strong>How will uncertainty and computation be audited?</strong>
+Match the variance to the design: inverse Hessian under the maintained
+likelihood, a robust sandwich for misspecification or WESML, and
+clustering for dependent sampling units. For Bayesian fits, report
+priors, chains, rank-normalized R-hat, bulk and tail ESS, MCSE, traces,
+and posterior-predictive checks. For simulated likelihood, report
+starts, scaling, draw construction and stability as <span class="math inline">\(S\)</span> increases. Numerical convergence is
+necessary evidence, not identification.</p></li>
+<li><p><strong>Which diagnostics and sensitivity exercises could change
+the conclusion?</strong> Report fit, but stress-test the economic
+object: elasticities, diversion, WTP, welfare, and entry predictions
+across plausible utility specifications, nesting trees, mixing
+distributions, priors, population shares, simulation draws, and
+counterfactual support. If the conclusion moves with a tree, a tail,
+<span class="math inline">\(Q\)</span>, or an entrant-exchangeability
+assumption, that movement is part of the empirical result rather than a
+nuisance to suppress.</p></li>
+</ol>
+<p>Question 3 deserves special emphasis: is the price coefficient itself
+credibly identified? If prices respond to unobserved demand — the
+standard concern whenever unobserved quality feeds both purchases and
+pricing — every row above is contaminated equally, and no amount of
+substitution structure repairs it. Model choice and price endogeneity
+are orthogonal problems. choicer’s tools for the latter follow the
+control-function tradition (Petrin and Train 2010): run the first stage
+of price on instruments outside the package and include the residual as
+an ordinary covariate (the hierarchical Bayes data preparations have a
+dedicated <code>cf_residual_col</code> argument). For market-level data,
+note that <code>blp()</code> is the inversion step of Berry (1994) — it
+recovers the mean utilities that rationalize observed shares, which can
+then be regressed, with instruments, on characteristics and price.</p>
+<p>Each model’s own vignette develops these tradeoffs in detail: <a href="mnl.html#substitution-restrictions">MNL</a>, <a href="nl.html">nested logit</a>, <a href="mxl.html#identification-and-tails">mixed logit</a>, <a href="hb.html">hierarchical Bayes</a>.</p>
+</div>
+<div id="how-choicer-compares" class="section level2">
+<h2>How choicer compares</h2>
+<p>Several excellent R packages estimate discrete-choice models — among
+them <a href="https://CRAN.R-project.org/package=mlogit">mlogit</a>, <a href="https://CRAN.R-project.org/package=logitr">logitr</a>, <a href="https://CRAN.R-project.org/package=gmnl">gmnl</a>, <a href="https://CRAN.R-project.org/package=apollo">apollo</a> and <a href="https://CRAN.R-project.org/package=mixl">mixl</a>. choicer’s focus
+is a fast C++ core with analytical gradients and Hessians, and a single,
+consistent post-estimation toolkit aimed at the demand and welfare
+quantities applied economists report.</p>
+</div>
+<div id="references" class="section level2">
+<h2>References</h2>
+<p>Berry, S. (1994). Estimating discrete-choice models of product
+differentiation. <em>RAND Journal of Economics</em>, 25(2), 242-262.</p>
+<p>Keane, M. P. (1992). A note on identification in the multinomial
+probit model. <em>Journal of Business &amp; Economic Statistics</em>,
+10(2), 193-200.</p>
+<p>Manski, C. F. and Lerman, S. R. (1977). The estimation of choice
+probabilities from choice based samples. <em>Econometrica</em>, 45(8),
+1977-1988.</p>
+<p>Petrin, A. and Train, K. (2010). A control function approach to
+endogeneity in consumer choice models. <em>Journal of Marketing
+Research</em>, 47(1), 3-13.</p>
+<p>Train, K. E. (2009). <em>Discrete Choice Methods with Simulation</em>
+(2nd ed.). Cambridge University Press.</p>
+</div>
+
+
+
+<!-- code folding -->
+
+
+<!-- dynamically load mathjax for compatibility with self-contained -->
+<script>
+  (function () {
+    var script = document.createElement("script");
+    script.type = "text/javascript";
+    script.src  = "https://mathjax.rstudio.com/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML";
+    document.getElementsByTagName("head")[0].appendChild(script);
+  })();
+</script>
+
+</body>
+</html>

@@ -2,7 +2,7 @@
 % Please edit documentation in R/mxlogit_utils.R
 \name{prepare_mxl_data}
 \alias{prepare_mxl_data}
-\title{Prepare inputs for \code{mxl_loglik_gradient_parallel()}}
+\title{Prepare inputs for mixed logit estimation}
 \usage{
 prepare_mxl_data(
   data,
@@ -14,7 +14,9 @@ prepare_mxl_data(
   weights = NULL,
   outside_opt_label = NULL,
   include_outside_option = FALSE,
-  rc_correlation = FALSE
+  rc_correlation = FALSE,
+  weights_col = NULL,
+  cluster_col = NULL
 )
 }
 \arguments{
@@ -30,13 +32,20 @@ prepare_mxl_data(
 
 \item{random_var_cols}{Vector of names of columns to be used as random variables}
 
-\item{weights}{Optional vector of weights for each choice situation. If NULL, equal weights are used.}
+\item{weights}{Optional vector of weights for each choice situation. If NULL, equal weights are used. All weights must be finite and strictly positive.}
 
 \item{outside_opt_label}{Label for the outside option (if any). If NULL, no outside option is assumed.}
 
 \item{include_outside_option}{Logical indicating whether to include an outside option in the model.}
 
 \item{rc_correlation}{Logical indicating whether random coefficients are correlated. Default is FALSE.}
+
+\item{weights_col}{Optional name of a column in \code{data} holding a per-row weight (constant within each choice situation, finite and strictly positive). Mutually exclusive with \code{weights}.}
+
+\item{cluster_col}{Optional name of a column in \code{data} holding cluster
+labels for cluster-robust standard errors. Must be constant within each
+\code{id_col}; collapsed to one label per choice situation and returned as
+\code{cluster}.}
 }
 \value{
 A \code{choicer_data_mxl} object (list) containing:
@@ -48,6 +57,8 @@ A \code{choicer_data_mxl} object (list) containing:
 \item \code{M}: Integer vector with number of alternatives per choice situation.
 \item \code{N}: Number of choice situations.
 \item \code{weights}: Vector of weights.
+\item \code{cluster}: Vector of cluster labels (or \code{NULL}).
+\item \code{situation_ids}: Choice-situation ids in prepared (sorted) order.
 \item \code{include_outside_option}: Logical flag.
 \item \code{rc_correlation}: Logical flag.
 \item \code{alt_mapping}: data.table mapping alternatives to summary statistics.

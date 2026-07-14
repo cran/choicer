@@ -4,15 +4,21 @@
 \alias{summary.choicer_nl}
 \title{Summary for nested logit model}
 \usage{
-\method{summary}{choicer_nl}(object, ...)
+\method{summary}{choicer_nl}(object, gof = TRUE, ...)
 }
 \arguments{
 \item{object}{A choicer_nl object.}
 
+\item{gof}{Logical; compute goodness-of-fit measures (McFadden R-squared,
+hit rate) for the summary footer. Involves an in-sample prediction pass
+(for mixed logit, a full simulation over draws); set to FALSE to skip.}
+
 \item{...}{Additional arguments (ignored).}
 }
 \value{
-A summary.choicer_nl object.
+A summary.choicer_nl object (includes a \code{gof} element with
+goodness-of-fit measures from \code{\link{gof}}; its fields are NA when
+the model was fitted with \code{keep_data = FALSE}).
 }
 \description{
 Triggers lazy Hessian computation if standard errors have not been computed yet.
