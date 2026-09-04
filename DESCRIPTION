@@ -1,6 +1,6 @@
 Package: choicer
 Title: Discrete Choice Models for Economic Applications
-Version: 0.2.0
+Version: 0.2.1
 Authors@R: 
     person("Fernando", "Cordeiro", , "fernandolpcordeiro@gmail.com", role = c("aut", "cre", "cph"))
 Description: Fast estimation of discrete-choice models for applied economics.
@@ -29,8 +29,8 @@ Config/Needs/website: pkgdown
 Config/testthat/edition: 3
 Config/roxygen2/version: 8.0.0
 NeedsCompilation: yes
-Packaged: 2026-07-14 01:41:27 UTC; fernando
+Packaged: 2026-09-04 20:46:27 UTC; fernando
 Author: Fernando Cordeiro [aut, cre, cph]
 Maintainer: Fernando Cordeiro <fernandolpcordeiro@gmail.com>
 Repository: CRAN
-Date/Publication: 2026-07-14 02:40:02 UTC
+Date/Publication: 2026-09-04 21:20:02 UTC
